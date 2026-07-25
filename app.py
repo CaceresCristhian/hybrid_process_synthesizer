@@ -27,6 +27,8 @@ class FlowsheetPump(BaseUnit):
         super().__init__(unit_id, name)
         self.p_boost = p_boost
         self.efficiency = efficiency
+        self.work_input = 0.0
+        self.heat_duty = 0.0
         
     def run_simulation(self, time_span: tuple, initial_state: list, **kwargs) -> dict:
         in_stream = self.inlets[0] if self.inlets else None
@@ -47,7 +49,7 @@ class FlowsheetPump(BaseUnit):
         return {"work_input_W": self.work_input}
         
     def size_equipment(self) -> dict:
-        self.sizing_results = {"hydraulic_power_W": self.work_input}
+        self.sizing_results = {"hydraulic_power_W": getattr(self, "work_input", 0.0)}
         return self.sizing_results
 
 # Page Config
