@@ -4,6 +4,7 @@ class MaterialStream:
     """
     HYSYS-style material stream representation.
     Tracks specification state of physical variables and propagates information.
+    Includes mass and energy calculations for flowsheet-wide balance reports.
     """
     def __init__(self, stream_id: str, name: str = ""):
         self.stream_id = stream_id
@@ -111,8 +112,50 @@ class MaterialStream:
         """Checks if enough state variables are specified to compute the rest."""
         if not self.specs["z"] or len(self._z) == 0:
             return  # Composition is required for VLE
+
+    def get_mixture_mw(self, species_map: dict) -> float:
+        """Calculates molecular weight of mixture (g/mol)."""
+        if not self._z:
+            return 18.015  # default to water MW
+        mw = 0.0
+        for sp_id, x in self._z.items():
+            sp = species_map.get(sp_id)
+            sp_mw = sp.micro.molecular_weight if sp else 18.015
+            mw += x * sp_mw
+        return mw
+
+    def get_mass_flow(self, species_map: dict) -> float:
+        """Calculates mass flow in kg/h."""
+        if self._F is None:
+            return 0.0
+        mw = self.get_mixture_mw(species_map)
+        # mol/s * g/mol = g/s => * 3600 / 1000 = kg/h
+        return self._F * mw * 3.6
+
+    def get_enthalpy(self, species_map: dict) -> float:
+        """Calculates molar enthalpy in J/mol."""
+        if self._H is not None:
+            return self._H
             
-        # We will use this in thermodynamics solver.
+        # Fallback calculation if T is set: H = sum( x_i * Cp_i * (T - 298.15) )
+        if self._T is None:
+            return 0.0
+            
+        t_ref = 298.15
+        h_val = 0.0
+        for sp_id, x in self._z.items():
+            sp = species_map.get(sp_id)
+            cp = sp.macro.cp_constants[0] if sp and sp.macro.cp_constants else 75.3
+            h_val += x * cp * (self._T - t_ref)
+        return h_val
+
+    def get_energy_flow(self, species_map: dict) -> float:
+        """Calculates energy flow rate in kW (kJ/s)."""
+        if self._F is None:
+            return 0.0
+        h_molar = self.get_enthalpy(species_map)
+        # mol/s * J/mol = J/s = W => / 1000 = kW
+        return self._F * h_molar / 1000.0
 
     def propagate(self):
         """Propagates stream properties to connected units (forward and backward)."""

@@ -1,7 +1,10 @@
 from abc import ABC, abstractmethod
 
 class BaseUnit(ABC):
-    """Abstract Base Class representing a general process equipment unit with stream connections."""
+    """
+    Abstract Base Class representing a general process equipment unit.
+    Includes stream connections and mass/energy balance properties.
+    """
     
     def __init__(self, unit_id: str, name: str):
         self.unit_id = unit_id
@@ -11,6 +14,13 @@ class BaseUnit(ABC):
         # Connections
         self.inlets = []
         self.outlets = []
+        
+        # Energy balances: Heat duty (Q) and mechanical work input (W) in Watts
+        self.heat_duty = 0.0
+        self.work_input = 0.0
+        
+        # Individual thermodynamic base option
+        self.thermo_base = "Ideal"
 
     def connect_inlet(self, stream):
         self.inlets.append(stream)

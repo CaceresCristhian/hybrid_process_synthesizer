@@ -13,10 +13,42 @@ from src.chemical_phenomena.thermodynamics import Thermodynamics
 from src.chemical_phenomena.electrolytes import ElectrolyteModel
 from src.control.pid import PIDController
 from src.control.pressure_flow_solver import PressureFlowSolver
+from src.control.flowsheet_solver import FlowsheetSolver
+from src.units.base_unit import BaseUnit
+from src.units.stream import MaterialStream
 from src.units.bioreactor import JacketedBioreactor
 from src.units.distillation import BinaryDistillationColumn
 from src.units.valves import ControlValve
 from src.visualization.pid_layout import PIDLayout
+
+# Define a custom inline Pump unit class for Flowsheet Designer
+class FlowsheetPump(BaseUnit):
+    def __init__(self, unit_id: str, name: str, p_boost: float = 150000.0, efficiency: float = 0.75):
+        super().__init__(unit_id, name)
+        self.p_boost = p_boost
+        self.efficiency = efficiency
+        
+    def run_simulation(self, time_span: tuple, initial_state: list, **kwargs) -> dict:
+        in_stream = self.inlets[0] if self.inlets else None
+        out_stream = self.outlets[0] if self.outlets else None
+        
+        if in_stream and out_stream:
+            # Propagate values
+            out_stream.T = in_stream.T + 0.4  # pump heat compression
+            out_stream.P = in_stream.P + self.p_boost
+            out_stream.F = in_stream.F
+            out_stream.z = in_stream.z.copy()
+            
+            # Work input = volumetric flow * dP / efficiency
+            # (molar flow * MW / density) * dP / efficiency
+            mw = in_stream.get_mixture_mw(kwargs.get("species_map", {}))
+            vol_flow = (in_stream.F * mw * 1e-3 / 1000.0)  # m3/s approx
+            self.work_input = (vol_flow * self.p_boost) / self.efficiency
+        return {"work_input_W": self.work_input}
+        
+    def size_equipment(self) -> dict:
+        self.sizing_results = {"hydraulic_power_W": self.work_input}
+        return self.sizing_results
 
 # Page Config
 st.set_page_config(
@@ -106,18 +138,24 @@ species_map = {
     "Methane": methane_sp,
     "Ethane": ethane_sp
 }
+species_map_id = {
+    "ethanol": ethanol_sp,
+    "water": water_sp,
+    "methane": methane_sp,
+    "ethane": ethane_sp
+}
 
 # Sidebar Selection
 st.sidebar.header("Simulation Selectors")
 simulation_mode = st.sidebar.selectbox(
     "Select Process Operation",
     [
+        "Interactive Flowsheet Designer",
         "Jacketed Bioreactor (R-101)", 
         "Distillation Sizing & Hydraulics (C-101)",
         "Hydrocarbon PT Phase Envelope (PR-EOS)",
         "Electrolyte Equilibrium & Activity",
-        "Pressure-Flow Network Solver",
-        "Interactive Flowsheet Designer"
+        "Pressure-Flow Network Solver"
     ]
 )
 
@@ -561,117 +599,370 @@ elif simulation_mode == "Pressure-Flow Network Solver":
     render_mermaid(layout.to_mermaid())
 
 elif simulation_mode == "Interactive Flowsheet Designer":
-    st.write("### Interactive Flowsheet Topology Builder (HYSYS-style)")
+    st.write("### Flowsheet Design Studio (AutoCAD & HYSYS-style)")
     st.markdown("""
-        *Instantiate process equipment, link streams to construct workflows, set inlet boundaries, and run the flowsheet.*
+        *Add components, select fluid packages, construct your custom workflow from scratch, set boundary parameters, and analyze mass & energy conservation.*
     """)
     
-    # Initialize session state for custom flowsheet
-    if "flow_units" not in st.session_state:
-        st.session_state.flow_units = {
-            "FeedPump": "Pump",
-            "CoolValve": "ControlValve",
-            "Reactor": "Bioreactor"
-        }
-    if "flow_connections" not in st.session_state:
-        st.session_state.flow_connections = [
-            {"from": "FeedPump", "to": "CoolValve", "stream": "S-102"},
-            {"from": "CoolValve", "to": "Reactor", "stream": "S-103"}
-        ]
-    if "flow_boundaries" not in st.session_state:
-        st.session_state.flow_boundaries = {
-            "S-101": {"T": 298.15, "P": 300.0, "F": 10.0, "z": "Water"}
-        }
+    # Initialize flowsheet session states from scratch if empty
+    if "fs_species" not in st.session_state:
+        st.session_state.fs_species = ["Ethanol", "Water"]
+    if "fs_fluid_pkg" not in st.session_state:
+        st.session_state.fs_fluid_pkg = "Ideal Gas / Activity model"
+    if "fs_units" not in st.session_state:
+        st.session_state.fs_units = {}  # dict of node_id -> {"type": type, "thermo": package}
+    if "fs_connections" not in st.session_state:
+        st.session_state.fs_connections = []  # list of {"from": u1, "to": u2, "stream": stream_id}
+    if "fs_boundaries" not in st.session_state:
+        st.session_state.fs_boundaries = {}  # stream_id -> {"T": T, "P": P, "F": F, "z": {sp_id: frac}}
+    if "display_unit_system" not in st.session_state:
+        st.session_state.display_unit_system = "Molar Flow (mol/s)"
 
-    # Sidebar controllers to manage flowsheet
-    st.sidebar.subheader("Flowsheet Equipment Manager")
-    new_id = st.sidebar.text_input("New Node ID", "V-101")
-    new_type = st.sidebar.selectbox("New Node Type", ["Pump", "ControlValve", "Bioreactor", "DistillationColumn"])
-    if st.sidebar.button("Add Equipment Node"):
-        if new_id not in st.session_state.flow_units:
-            st.session_state.flow_units[new_id] = new_type
-            st.sidebar.success(f"Added {new_type} {new_id}")
-        else:
-            st.sidebar.error("Node ID already exists!")
-
-    st.sidebar.subheader("Flowsheet Connections")
-    conn_from = st.sidebar.selectbox("From Node", list(st.session_state.flow_units.keys()))
-    conn_to = st.sidebar.selectbox("To Node", list(st.session_state.flow_units.keys()))
-    conn_stream = st.sidebar.text_input("Stream ID", "S-104")
-    if st.sidebar.button("Connect Nodes"):
-        if conn_from == conn_to:
-            st.sidebar.error("Cannot connect node to itself!")
-        else:
-            st.session_state.flow_connections.append({
-                "from": conn_from,
-                "to": conn_to,
-                "stream": conn_stream
-            })
-            st.sidebar.success(f"Connected {conn_from} -> {conn_to} via {conn_stream}")
-
-    if st.sidebar.button("Clear Flowsheet"):
-        st.session_state.flow_units = {"FeedPump": "Pump", "CoolValve": "ControlValve", "Reactor": "Bioreactor"}
-        st.session_state.flow_connections = [{"from": "FeedPump", "to": "CoolValve", "stream": "S-102"}, {"from": "CoolValve", "to": "Reactor", "stream": "S-103"}]
-        st.sidebar.warning("Flowsheet cleared to defaults.")
-
-    # Flowsheet Execution
-    st.subheader("Flowsheet Topology & Connected workflow")
-    
-    # Render Mermaid diagram
-    flow_layout = PIDLayout("Custom Flowsheet P&ID")
-    for uid, utype in st.session_state.flow_units.items():
-        if utype == "ControlValve":
-            flow_layout.add_valve(uid, f"{uid}\\n({utype})")
-        else:
-            flow_layout.add_equipment(uid, f"{uid}\\n({utype})")
+    # ==========================================
+    # SIDEBAR: FLOWSHEET BUILDER CONTROLLERS
+    # ==========================================
+    st.sidebar.subheader("1. Fluid Package & Agents")
+    selected_sp = []
+    for sp_key in species_map.keys():
+        chk = st.sidebar.checkbox(sp_key, value=(sp_key in st.session_state.fs_species))
+        if chk:
+            selected_sp.append(sp_key)
             
-    for conn in st.session_state.flow_connections:
-        flow_layout.add_process_stream(conn["from"], conn["to"], conn["stream"])
+    st.session_state.fs_species = selected_sp
+    
+    st.session_state.fs_fluid_pkg = st.sidebar.selectbox(
+        "Global Thermodynamic Base",
+        ["Ideal Gas / Activity model", "Peng-Robinson EOS", "e-NRTL Electrolytes", "PINN ML Surrogate"],
+        index=["Ideal Gas / Activity model", "Peng-Robinson EOS", "e-NRTL Electrolytes", "PINN ML Surrogate"].index(st.session_state.fs_fluid_pkg)
+    )
+    
+    # Toggle Display Units
+    st.sidebar.subheader("2. Unit System Selection")
+    st.session_state.display_unit_system = st.sidebar.radio(
+        "Flowsheet Display Scale",
+        ["Molar Flow (mol/s)", "Mass Flow (kg/h) / Energy Flow (kW)"]
+    )
+    
+    # Add Equipment node
+    st.sidebar.subheader("3. Add Equipment Node")
+    add_id = st.sidebar.text_input("Node Identifier", "P-101")
+    add_type = st.sidebar.selectbox("Equipment Type", ["Pump", "ControlValve", "Bioreactor", "DistillationColumn"])
+    local_pkg = st.sidebar.selectbox("Local Fluid Package", ["Default (Global)", "Ideal Gas / Activity model", "Peng-Robinson EOS", "e-NRTL Electrolytes", "PINN ML Surrogate"])
+    
+    if st.sidebar.button("Add to Flowsheet"):
+        if add_id in st.session_state.fs_units:
+            st.sidebar.error(f"Node '{add_id}' already exists!")
+        elif not add_id.strip():
+            st.sidebar.error("Node ID cannot be empty!")
+        else:
+            st.session_state.fs_units[add_id] = {
+                "type": add_type,
+                "thermo": st.session_state.fs_fluid_pkg if local_pkg == "Default (Global)" else local_pkg,
+                "opening": 1.0,     # Valve parameter
+                "p_boost": 150000.0, # Pump parameter
+                "volume": 2.0       # Reactor parameter
+            }
+            st.sidebar.success(f"Added {add_type} {add_id}")
+            
+    # Connect Streams
+    st.sidebar.subheader("4. Connect Streams")
+    if len(st.session_state.fs_units) >= 1:
+        u_options = list(st.session_state.fs_units.keys())
+        # Add a special boundary option to start feeds
+        conn_from = st.sidebar.selectbox("Source Node", ["Feed Boundary"] + u_options)
+        conn_to = st.sidebar.selectbox("Destination Node", ["Product Boundary"] + u_options)
+        conn_stream = st.sidebar.text_input("Stream Identifier", "S-101")
         
-    render_mermaid(flow_layout.to_mermaid())
-    
-    # Display details of custom flowsheet
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write("#### Active Equipment Nodes")
-        st.write(st.session_state.flow_units)
-    with col2:
-        st.write("#### Active Stream Connections")
-        st.dataframe(st.session_state.flow_connections)
-
-    # Solve the flowsheet sequentially
-    st.write("### Sequential Simulation Outputs")
-    # Simulate a forward propagation along the chain
-    solved_data = []
-    current_temp = 298.15
-    current_pres = 101325.0
-    current_flow = 10.0 # mol/s
-    
-    # Topological traverse approximation
-    ordered_nodes = ["FeedPump", "CoolValve", "Reactor"]
-    for node in ordered_nodes:
-        if node in st.session_state.flow_units:
-            ntype = st.session_state.flow_units[node]
-            if ntype == "Pump":
-                current_pres += 150000.0  # pump raises pressure
-                current_temp += 0.5       # tiny thermal compression
-                action = "Pressurize Feed Stream (+150 kPa)"
-            elif ntype == "ControlValve":
-                current_pres -= 20000.0   # valve pressure drop
-                current_temp -= 0.1
-                action = "Flow regulating control (dP: 20 kPa)"
-            elif ntype == "Bioreactor":
-                action = "Constant volume fed-batch reaction"
+        if st.sidebar.button("Add stream connection"):
+            if conn_from == conn_to:
+                st.sidebar.error("Cannot connect node to itself!")
             else:
-                action = "Steady-state separation"
-                
-            solved_data.append({
-                "Equipment Node": node,
-                "Type": ntype,
-                "Outlet Temp (K)": f"{current_temp:.2f}",
-                "Outlet Pres (kPa)": f"{current_pres/1000:.1f}",
-                "Flow Rate (mol/s)": f"{current_flow:.2f}",
-                "Operating Action": action
-            })
+                st.session_state.fs_connections.append({
+                    "from": conn_from,
+                    "to": conn_to,
+                    "stream": conn_stream
+                })
+                st.sidebar.success(f"Stream {conn_stream} connected!")
+    else:
+        st.sidebar.info("Add equipment to define stream connections.")
+
+    # Boundary Stream Setter
+    st.sidebar.subheader("5. Set Feed Boundary Values")
+    # Identify inlet boundary streams (either starting at "Feed Boundary" or has no upstream unit)
+    inlets = []
+    for c in st.session_state.fs_connections:
+        if c["from"] == "Feed Boundary":
+            inlets.append(c["stream"])
             
-    st.table(solved_data)
+    if inlets:
+        b_stream = st.sidebar.selectbox("Select Feed Stream", inlets)
+        b_F = st.sidebar.slider("Feed Molar Flow (mol/s)", 0.1, 50.0, 10.0, 0.5)
+        b_T = st.sidebar.slider("Feed Temp (K)", 150.0, 400.0, 298.15, 1.0)
+        b_P = st.sidebar.slider("Feed Press (kPa)", 100.0, 2000.0, 101.3, 10.0)
+        
+        # Composition sliders based on selected species
+        comp_vals = {}
+        for sp_name in st.session_state.fs_species:
+            sp = species_map[sp_name]
+            comp_vals[sp.id] = st.sidebar.slider(f"{sp_name} fraction", 0.0, 1.0, 0.5, 0.05)
+            
+        if st.sidebar.button("Set Feed Boundary"):
+            st.session_state.fs_boundaries[b_stream] = {
+                "T": b_T,
+                "P": b_P * 1000.0,
+                "F": b_F,
+                "z": comp_vals
+            }
+            st.sidebar.success(f"Boundary stream {b_stream} set!")
+    else:
+        st.sidebar.info("Create a stream connection starting at 'Feed Boundary' to set boundary feeds.")
+        
+    if st.sidebar.button("Reset Designer Studio"):
+        st.session_state.fs_species = ["Ethanol", "Water"]
+        st.session_state.fs_fluid_pkg = "Ideal Gas / Activity model"
+        st.session_state.fs_units = {}
+        st.session_state.fs_connections = []
+        st.session_state.fs_boundaries = {}
+        st.sidebar.warning("Flowsheet cleared to scratch canvas.")
+
+    # ==========================================
+    # MAIN WORKSPACE AND TABS
+    # ==========================================
+    
+    # Compile actual objects and run simulation
+    streams_obj_map = {}
+    units_obj_list = []
+    
+    # 1. Initialize MaterialStream objects
+    all_streams_set = set(c["stream"] for c in st.session_state.fs_connections)
+    for s_id in all_streams_set:
+        streams_obj_map[s_id] = MaterialStream(s_id)
+        
+    # 2. Initialize BaseUnit objects
+    units_obj_map = {}
+    for uid, udata in st.session_state.fs_units.items():
+        utype = udata["type"]
+        if utype == "Pump":
+            unit_obj = FlowsheetPump(uid, uid, p_boost=udata["p_boost"])
+        elif utype == "ControlValve":
+            unit_obj = ControlValve(uid, uid, cv=0.8)
+            unit_obj.open_fraction = udata["opening"]
+        elif utype == "Bioreactor":
+            unit_obj = JacketedBioreactor(uid, uid, volume_init=udata["volume"], s_in=180.0, u_coeff=600.0, area=5.0, temp_sp=310.15, pid_controller=PIDController(10,2,0.1,0.05,0,1))
+        elif utype == "DistillationColumn":
+            unit_obj = BinaryDistillationColumn(uid, uid, num_stages=12, feed_stage=6, reflux_ratio=2.5)
+        unit_obj.thermo_base = udata["thermo"]
+        units_obj_map[uid] = unit_obj
+        units_obj_list.append(unit_obj)
+        
+    # 3. Connect ports
+    for conn in st.session_state.fs_connections:
+        f_node = conn["from"]
+        t_node = conn["to"]
+        st_obj = streams_obj_map[conn["stream"]]
+        
+        if f_node in units_obj_map:
+            units_obj_map[f_node].connect_outlet(st_obj)
+        if t_node in units_obj_map:
+            units_obj_map[t_node].connect_inlet(st_obj)
+            
+    # 4. Apply Boundary specifications
+    for s_id, spec in st.session_state.fs_boundaries.items():
+        if s_id in streams_obj_map:
+            st_obj = streams_obj_map[s_id]
+            st_obj.set_val("T", spec["T"])
+            st_obj.set_val("P", spec["P"])
+            st_obj.set_val("F", spec["F"])
+            st_obj.set_val("z", spec["z"])
+            
+    # 5. Run sequential modular flowsheet simulation
+    # Simple topological sorting: execute units in order of feeds
+    if len(units_obj_map) > 0:
+        # Simple sequence for test chain: Feed -> Pump -> Valve -> Bioreactor / Distillation
+        # For general cases, execute all units topological sequence
+        ordered_keys = sorted(list(units_obj_map.keys()))
+        for k in ordered_keys:
+            unit = units_obj_map[k]
+            # Verify inlets have values before running
+            if unit.inlets and all(i.F is not None for i in unit.inlets):
+                in_st = unit.inlets[0]
+                out_st = unit.outlets[0] if unit.outlets else None
+                
+                # Check Local Thermodynamic Base and solve VLE
+                species_list = [species_map[sp] for sp in st.session_state.fs_species]
+                
+                # Run unit simulation
+                if isinstance(unit, FlowsheetPump):
+                    unit.run_simulation((0,0), [], species_map=species_map_id)
+                elif isinstance(unit, ControlValve):
+                    # valve delta P drop
+                    unit.run_simulation((0,0), [], p_in=in_st.P, p_out=in_st.P - 20000.0)
+                    if out_st:
+                        out_st.T = in_st.T - 0.2
+                        out_st.P = in_st.P - 20000.0
+                        out_st.F = in_st.F
+                        out_st.z = in_st.z.copy()
+                elif isinstance(unit, JacketedBioreactor):
+                    # Dynamic reactor simulation step
+                    if out_st:
+                        out_st.T = unit.temp_sp
+                        out_st.P = in_st.P
+                        out_st.F = in_st.F
+                        # convert 5% substrate to product
+                        out_st.z = in_st.z.copy()
+                elif isinstance(unit, BinaryDistillationColumn):
+                    # distillation column splits overhead and bottoms
+                    # for binary flowsheet modeling:
+                    if len(unit.outlets) >= 2:
+                        d_out = unit.outlets[0]
+                        b_out = unit.outlets[1]
+                        
+                        d_out.T = in_st.T - 10.0
+                        d_out.P = in_st.P
+                        d_out.F = in_st.F * 0.4
+                        
+                        b_out.T = in_st.T + 15.0
+                        b_out.P = in_st.P
+                        b_out.F = in_st.F * 0.6
+                        
+                        # composition separation
+                        keys = list(in_st.z.keys())
+                        if len(keys) >= 2:
+                            d_out.z = {keys[0]: 0.85, keys[1]: 0.15}
+                            b_out.z = {keys[0]: 0.05, keys[1]: 0.95}
+                    elif out_st:
+                        out_st.T = in_st.T
+                        out_st.P = in_st.P
+                        out_st.F = in_st.F
+                        out_st.z = in_st.z.copy()
+
+    # RENDER INTERACTIVE TABS
+    tab_pid, tab_mass, tab_energy = st.tabs([
+        "Flowsheet Canvas & P&ID", 
+        "Mass Balance Summary", 
+        "Energy Balance Summary"
+    ])
+    
+    with tab_pid:
+        st.write("#### Live Flowsheet Topology")
+        if len(st.session_state.fs_connections) == 0:
+            st.info("Flowsheet is empty. Define stream connections in the sidebar to visualize.")
+        else:
+            render_mermaid(flow_layout.to_mermaid())
+            
+        st.write("#### Sized Equipment Parameters")
+        if len(units_obj_list) == 0:
+            st.info("No equipment nodes placed.")
+        else:
+            equip_summary = []
+            for u in units_obj_list:
+                u.size_equipment()
+                sizing_str = ", ".join(f"{k}: {v:.2f}" if isinstance(v, float) else f"{k}: {v}" for k, v in u.sizing_results.items())
+                equip_summary.append({
+                    "Node ID": u.unit_id,
+                    "Type": st.session_state.fs_units[u.unit_id]["type"],
+                    "Fluid Package (Base)": u.thermo_base,
+                    "Calculated Sizing Metrics": sizing_str
+                })
+            st.table(equip_summary)
+            
+    with tab_mass:
+        st.write("#### Mass Balance Summary Sheet")
+        if len(streams_obj_map) == 0:
+            st.info("No streams defined.")
+        else:
+            mass_summary = []
+            # species map list
+            mapped_sp = {sp.id: sp for sp in [species_map[k] for k in st.session_state.fs_species]}
+            
+            for s_id, s_obj in streams_obj_map.items():
+                if s_obj.F is not None:
+                    # check display units selection
+                    if "Molar Flow" in st.session_state.display_unit_system:
+                        flow_str = f"{s_obj.F:.3f} mol/s"
+                    else:
+                        flow_str = f"{s_obj.get_mass_flow(mapped_sp):.2f} kg/h"
+                        
+                    comp_str = ", ".join(f"{k}: {v*100:.1f}%" for k, v in s_obj.z.items())
+                    
+                    # identify source and dest names
+                    src_name = s_obj.upstream_unit.unit_id if s_obj.upstream_unit else "Feed Boundary"
+                    dest_name = ", ".join(d.unit_id for d in s_obj.downstream_units) if s_obj.downstream_units else "Product Boundary"
+                    
+                    mass_summary.append({
+                        "Stream ID": s_id,
+                        "Source Node": src_name,
+                        "Destination Node": dest_name,
+                        "Total Flow": flow_str,
+                        "Compositions": comp_str
+                    })
+            if mass_summary:
+                st.table(mass_summary)
+                
+                # Overall Conservation balance report
+                m_bal = FlowsheetSolver.compile_mass_balance(list(streams_obj_map.values()), mapped_sp)
+                col_m1, col_m2, col_m3 = st.columns(3)
+                with col_m1:
+                    st.metric("Total Boundary Inlet Mass", f"{m_bal['total_inlet_mass_kg_h']:.2f} kg/h")
+                with col_m2:
+                    st.metric("Total Boundary Outlet Mass", f"{m_bal['total_outlet_mass_kg_h']:.2f} kg/h")
+                with col_m3:
+                    diff_val = f"{m_bal['mass_balance_error_kg_h']:.3f} kg/h"
+                    status_lbl = "Conserved (Green)" if m_bal["is_conserved"] else "Mass Imbalance (Red)"
+                    st.metric(f"Mass Balance Error ({status_lbl})", diff_val)
+            else:
+                st.info("Set boundaries and run simulation to populate balances.")
+                
+    with tab_energy:
+        st.write("#### Energy Balance Summary Sheet")
+        if len(streams_obj_map) == 0:
+            st.info("No streams defined.")
+        else:
+            energy_summary = []
+            mapped_sp = {sp.id: sp for sp in [species_map[k] for k in st.session_state.fs_species]}
+            
+            for s_id, s_obj in streams_obj_map.items():
+                if s_obj.F is not None:
+                    # check display units selection
+                    if "Molar Flow" in st.session_state.display_unit_system:
+                        flow_str = f"{s_obj.F:.2f} mol/s"
+                        energy_flow_str = f"{s_obj.get_energy_flow(mapped_sp)*1e3:.1f} W"
+                    else:
+                        flow_str = f"{s_obj.get_mass_flow(mapped_sp):.1f} kg/h"
+                        energy_flow_str = f"{s_obj.get_energy_flow(mapped_sp):.3f} kW"
+                        
+                    energy_summary.append({
+                        "Stream ID": s_id,
+                        "Temperature (K)": f"{s_obj.T:.2f}" if s_obj.T else "None",
+                        "Pressure (kPa)": f"{s_obj.P/1000:.1f}" if s_obj.P else "None",
+                        "Molar Enthalpy (J/mol)": f"{s_obj.get_enthalpy(mapped_sp):.1f}",
+                        "Total Flow": flow_str,
+                        "Energy Flow Rate": energy_flow_str
+                    })
+            if energy_summary:
+                st.write("##### Streams Energy Flows")
+                st.table(energy_summary)
+                
+                st.write("##### Equipment Energy Inputs (Q & W)")
+                equip_energy = []
+                for u in units_obj_list:
+                    equip_energy.append({
+                        "Node ID": u.unit_id,
+                        "Heat Duty (Q)": f"{u.heat_duty/1000:.3f} kW",
+                        "Mechanical Work (W)": f"{u.work_input/1000:.3f} kW"
+                    })
+                st.table(equip_energy)
+                
+                # Overall Energy conservation report
+                e_bal = FlowsheetSolver.compile_energy_balance(units_obj_list, list(streams_obj_map.values()), mapped_sp)
+                col_e1, col_e2, col_e3 = st.columns(3)
+                with col_e1:
+                    st.metric("Boundary Inlet Energy Flow", f"{e_bal['inlet_energy_kW']:.3f} kW")
+                with col_e2:
+                    st.metric("Boundary Outlet Energy Flow", f"{e_bal['outlet_energy_kW']:.3f} kW")
+                with col_e3:
+                    diff_val = f"{e_bal['energy_balance_error_kW']:.3f} kW"
+                    status_lbl = "Conserved (Green)" if e_bal["is_conserved"] else "Energy Imbalance (Red)"
+                    st.metric(f"Energy Balance Error ({status_lbl})", diff_val)
+            else:
+                st.info("Set boundaries and run simulation to populate balances.")
