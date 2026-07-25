@@ -21,8 +21,8 @@ class TestSVGFlowsheet(unittest.TestCase):
         self.assertTrue(svg.endswith("</svg>"))
         
         # Bounding box checks
-        self.assertIn("Feed boundaries", svg)
-        self.assertIn("Product boundaries", svg)
+        self.assertIn("Feed Boundaries", svg)
+        self.assertIn("Product Boundaries", svg)
         
         # Equipment symbols and connections checks
         self.assertIn("P-101", svg)

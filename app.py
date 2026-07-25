@@ -20,6 +20,7 @@ from src.units.bioreactor import JacketedBioreactor
 from src.units.distillation import BinaryDistillationColumn
 from src.units.valves import ControlValve
 from src.visualization.pid_layout import PIDLayout
+from src.units.mixer import FlowsheetMixer
 
 # Define a custom inline Pump unit class for Flowsheet Designer
 class FlowsheetPump(BaseUnit):
@@ -648,7 +649,7 @@ elif simulation_mode == "Interactive Flowsheet Designer":
     # Add Equipment node
     st.sidebar.subheader("3. Add Equipment Node")
     add_id = st.sidebar.text_input("Node Identifier", "P-101")
-    add_type = st.sidebar.selectbox("Equipment Type", ["Pump", "ControlValve", "Bioreactor", "DistillationColumn"])
+    add_type = st.sidebar.selectbox("Equipment Type", ["Pump", "ControlValve", "Bioreactor", "DistillationColumn", "Mixer"])
     local_pkg = st.sidebar.selectbox("Local Fluid Package", ["Default (Global)", "Ideal Gas / Activity model", "Peng-Robinson EOS", "e-NRTL Electrolytes", "PINN ML Surrogate"])
     
     col_variation = "Sieve Tray Column"
@@ -758,6 +759,8 @@ elif simulation_mode == "Interactive Flowsheet Designer":
             unit_obj = JacketedBioreactor(uid, uid, volume_init=udata["volume"], s_in=180.0, u_coeff=600.0, area=5.0, temp_sp=310.15, pid_controller=PIDController(10,2,0.1,0.05,0,1))
         elif utype == "DistillationColumn":
             unit_obj = BinaryDistillationColumn(uid, uid, num_stages=12, feed_stage=6, reflux_ratio=2.5)
+        elif utype == "Mixer":
+            unit_obj = FlowsheetMixer(uid, uid)
         unit_obj.thermo_base = udata["thermo"]
         units_obj_map[uid] = unit_obj
         units_obj_list.append(unit_obj)
@@ -817,6 +820,8 @@ elif simulation_mode == "Interactive Flowsheet Designer":
                         out_st.F = in_st.F
                         # convert 5% substrate to product
                         out_st.z = in_st.z.copy()
+                elif isinstance(unit, FlowsheetMixer):
+                    unit.run_simulation((0,0), [], species_map=species_map_id)
                 elif isinstance(unit, BinaryDistillationColumn):
                     # distillation column splits overhead and bottoms
                     # for binary flowsheet modeling:
@@ -871,6 +876,9 @@ elif simulation_mode == "Interactive Flowsheet Designer":
         to_id = conn["to"].replace(" ", "_")
         flow_layout.add_process_stream(from_id, to_id, conn["stream"])
 
+    # Global species map for tooltips and summaries
+    mapped_sp = {sp.id: sp for sp in [species_map[k] for k in st.session_state.fs_species]}
+
     # RENDER INTERACTIVE TABS
     tab_pid, tab_mass, tab_energy = st.tabs([
         "Flowsheet Canvas & P&ID", 
@@ -887,7 +895,14 @@ elif simulation_mode == "Interactive Flowsheet Designer":
             if view_mode == "CAD Vector Flowsheet (SVG)":
                 from src.visualization.svg_flowsheet import SVGFlowsheet
                 variations = {uid: udata.get("variation", "Sieve Tray Column") for uid, udata in st.session_state.fs_units.items()}
-                svg_code = SVGFlowsheet.generate_flowsheet_svg(st.session_state.fs_units, st.session_state.fs_connections, variations)
+                svg_code = SVGFlowsheet.generate_flowsheet_svg(
+                    st.session_state.fs_units, 
+                    st.session_state.fs_connections, 
+                    variations,
+                    stream_states=streams_obj_map,
+                    units_states=units_obj_map,
+                    species_map=mapped_sp
+                )
                 st.write(svg_code, unsafe_allow_html=True)
             else:
                 render_mermaid(flow_layout.to_mermaid())
@@ -958,8 +973,6 @@ elif simulation_mode == "Interactive Flowsheet Designer":
             st.info("No streams defined.")
         else:
             mass_summary = []
-            # species map list
-            mapped_sp = {sp.id: sp for sp in [species_map[k] for k in st.session_state.fs_species]}
             
             for s_id, s_obj in streams_obj_map.items():
                 if s_obj.F is not None:
@@ -1005,7 +1018,6 @@ elif simulation_mode == "Interactive Flowsheet Designer":
             st.info("No streams defined.")
         else:
             energy_summary = []
-            mapped_sp = {sp.id: sp for sp in [species_map[k] for k in st.session_state.fs_species]}
             
             for s_id, s_obj in streams_obj_map.items():
                 if s_obj.F is not None:
