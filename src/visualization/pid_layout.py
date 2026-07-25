@@ -7,10 +7,10 @@ class PIDLayout:
         self.edges = []
 
     def add_equipment(self, element_id: str, label: str):
-        self.nodes.append((element_id, f'"{label}"', "equipment"))
+        self.nodes.append((element_id, f'["{label}"]', "equipment"))
 
     def add_valve(self, element_id: str, label: str):
-        self.nodes.append((element_id, f'"{label}"', "valve"))
+        self.nodes.append((element_id, f'["{label}"]', "valve"))
 
     def add_instrument(self, element_id: str, label: str):
         self.nodes.append((element_id, f'(("{label}"))', "instrument"))

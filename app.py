@@ -88,11 +88,24 @@ def render_mermaid(code: str):
     </body>
     </html>
     """
-    components.html(html, height=380, scrolling=True)
+    components.html(html, height=400, scrolling=True)
 
 # App Header
 st.markdown(f'<div class="main-title">Hybrid Process Synthesizer (Aspen Plus & HYSYS Integrated)</div>', unsafe_allow_html=True)
 st.markdown(f'<div class="subtitle">v{APP_VERSION} ({RELEASE_STAGE}) | Dynamic Pressure-Flow ──> Advanced VLE/EOS ──> Electrolyte Equilibrium ──> Equipment Sizing</div>', unsafe_allow_html=True)
+
+# Load global available species
+water_sp = ChemicalDatabaseLoader.get_water_metadata()
+ethanol_sp = ChemicalDatabaseLoader.get_ethanol_metadata()
+methane_sp = ChemicalDatabaseLoader.get_methane_metadata()
+ethane_sp = ChemicalDatabaseLoader.get_ethane_metadata()
+
+species_map = {
+    "Ethanol": ethanol_sp,
+    "Water": water_sp,
+    "Methane": methane_sp,
+    "Ethane": ethane_sp
+}
 
 # Sidebar Selection
 st.sidebar.header("Simulation Selectors")
@@ -103,7 +116,8 @@ simulation_mode = st.sidebar.selectbox(
         "Distillation Sizing & Hydraulics (C-101)",
         "Hydrocarbon PT Phase Envelope (PR-EOS)",
         "Electrolyte Equilibrium & Activity",
-        "Pressure-Flow Network Solver"
+        "Pressure-Flow Network Solver",
+        "Interactive Flowsheet Designer"
     ]
 )
 
@@ -147,9 +161,8 @@ if simulation_mode == "Jacketed Bioreactor (R-101)":
         return mu, qp, 0.5, 0.01
 
     initial_state = [0.1, 120.0, 0.0, 1.2, 298.15, 292.0]
-    sim = bioreactor.odes(0.0, initial_state, feed_rate/3600.0, 2.0, 285.0, bioreactor_kinetics)
     
-    # We run a quick time integration for display
+    # Run dynamic integration
     t_span = np.linspace(0, 8, 100)
     y_vals = []
     state = initial_state.copy()
@@ -163,38 +176,43 @@ if simulation_mode == "Jacketed Bioreactor (R-101)":
     
     # Sizing
     max_vol = np.max(y_vals[:, 3])
-    # ASME wall thickness
-    # t = (P * R) / (S * E - 0.6 * P) + CA
-    design_p = 200000.0 # 2 bar
-    radius = np.sqrt(max_vol / (np.pi * 3)) # aspect ratio H/D = 3
-    t_shell = (design_p * radius) / (115.0e6 * 0.85 - 0.6 * design_p) * 1000 + 1.5 # mm
+    design_p = 200000.0
+    radius = np.sqrt(max_vol / (np.pi * 3))
+    t_shell = (design_p * radius) / (115.0e6 * 0.85 - 0.6 * design_p) * 1000 + 1.5
     
-    col1, col2, col3 = st.columns(3)
-    with col1:
+    # Layout grid
+    col_img, col_metrics = st.columns([2, 3])
+    with col_img:
+        st.write("#### Bioreactor Equipment Figure")
+        st.image("data/bioreactor_schematic.jpg", caption="Jacketed Bioreactor Process Diagram", use_container_width=True)
+        
+    with col_metrics:
+        st.write("#### Nominal Sizing & Metrics")
+        sub_col1, sub_col2 = st.columns(2)
+        with sub_col1:
+            st.markdown(f"""
+            <div class="metric-card">
+                <h5>ASME Vessel Catalog</h5>
+                <b>Calculated Thickness:</b> {t_shell:.2f} mm<br/>
+                <b>ASME Material:</b> SS-316<br/>
+                <b>Max vessel volume:</b> {max_vol:.2f} m³
+            </div>
+            """, unsafe_allow_html=True)
+        with sub_col2:
+            st.markdown(f"""
+            <div class="metric-card">
+                <h5>Piping & Feed Line</h5>
+                <b>Calculated NPS:</b> 1.5"<br/>
+                <b>Inside Diameter:</b> 40.9 mm<br/>
+                <b>Pressure drop:</b> 14.5 kPa
+            </div>
+            """, unsafe_allow_html=True)
+            
         st.markdown(f"""
         <div class="metric-card">
-            <h4>ASME Sizing & Vessel Catalog</h4>
-            <b>Calculated Thickness:</b> {t_shell:.2f} mm<br/>
-            <b>ASME Shell Material:</b> SS-316<br/>
-            <b>Max Vessel Volume:</b> {max_vol:.2f} m³
-        </div>
-        """, unsafe_allow_html=True)
-    with col2:
-        st.markdown(f"""
-        <div class="metric-card">
-            <h4>Piping Catalog Selection</h4>
-            <b>Calculated NPS Size:</b> 1.5"<br/>
-            <b>Inside Diameter:</b> 40.9 mm<br/>
-            <b>Schedule Selection:</b> Schedule 40
-        </div>
-        """, unsafe_allow_html=True)
-    with col3:
-        st.markdown(f"""
-        <div class="metric-card">
-            <h4>Pump Sizing & Catalog</h4>
-            <b>Feed Volumetric Flow:</b> {feed_rate:.2f} m³/h<br/>
-            <b>Pressure Drop:</b> 14.5 kPa<br/>
-            <b>Catalog Motor Power:</b> 25 Watts
+            <h5>Pump Selection</h5>
+            <b>Calculated Hydraulic Power:</b> {feed_rate/3600 * 14500:.2f} Watts<br/>
+            <b>Catalog Motor Selection:</b> 25 W Nominal Power
         </div>
         """, unsafe_allow_html=True)
 
@@ -242,11 +260,18 @@ if simulation_mode == "Jacketed Bioreactor (R-101)":
     render_mermaid(layout.to_mermaid())
 
 elif simulation_mode == "Distillation Sizing & Hydraulics (C-101)":
+    st.sidebar.subheader("Chemical Agent Selection")
+    light_name = st.sidebar.selectbox("Select Light Key Component", list(species_map.keys()), index=0)
+    heavy_name = st.sidebar.selectbox("Select Heavy Key Component", list(species_map.keys()), index=1)
+    
+    light_species = species_map[light_name]
+    heavy_species = species_map[heavy_name]
+    
     st.sidebar.subheader("Distillation Column Configuration")
     num_stages = st.sidebar.slider("Total Stages (N)", 5, 25, 12, 1)
     feed_stage = st.sidebar.slider("Feed Stage", 2, num_stages-1, num_stages//2, 1)
     reflux_ratio = st.sidebar.slider("Reflux Ratio (R)", 0.5, 10.0, 2.5, 0.1)
-    z_f = st.sidebar.slider("Feed Mole Fraction (Ethanol)", 0.05, 0.8, 0.25, 0.05)
+    z_f = st.sidebar.slider("Feed Mole Fraction (Light Key)", 0.05, 0.8, 0.25, 0.05)
     
     # Side draws and pump-around input sliders
     st.sidebar.subheader("Refinery Side Operations (HYSYS-style)")
@@ -259,10 +284,9 @@ elif simulation_mode == "Distillation Sizing & Hydraulics (C-101)":
     pa_return = st.sidebar.slider("Pump-around Return Stage", 2, pa_draw-1, 2, 1) if enable_pa else 3
     pa_flow = st.sidebar.slider("Pump-around Flow Rate (mol/s)", 0.0, 5.0, 1.5, 0.1) if enable_pa else 0.0
 
-    binary_system = ChemicalDatabaseLoader.load_binary_system()
-    water = binary_system["water"]
-    ethanol = binary_system["ethanol"]
-    
+    if light_species.id == heavy_species.id:
+        st.warning("Warning: Light and Heavy key components are the same! Standard binary separation is not possible. Please select different agents.")
+        
     column = BinaryDistillationColumn(
         unit_id="C-101",
         name="Distillation Column",
@@ -286,8 +310,8 @@ elif simulation_mode == "Distillation Sizing & Hydraulics (C-101)":
     result = column.run_simulation(
         time_span=(0,0),
         initial_state=[],
-        light_species=ethanol,
-        heavy_species=water,
+        light_species=light_species,
+        heavy_species=heavy_species,
         z_f=z_f,
         f_feed=10.0,
         q_feed=1.0,
@@ -296,43 +320,52 @@ elif simulation_mode == "Distillation Sizing & Hydraulics (C-101)":
     
     sizing = column.size_equipment()
     
-    col1, col2, col3 = st.columns(3)
-    with col1:
+    # Layout grid
+    col_img, col_metrics = st.columns([2, 3])
+    with col_img:
+        st.write("#### Distillation Equipment Figure")
+        st.image("data/distillation_schematic.jpg", caption="Distillation Column Process Diagram", use_container_width=True)
+        
+    with col_metrics:
+        st.write("#### Nominal Outputs & Sizing")
+        sub_col1, sub_col2 = st.columns(2)
+        with sub_col1:
+            st.markdown(f"""
+            <div class="metric-card">
+                <h5>Distillate Output</h5>
+                <b>Purity:</b> {result['distillate_x']*100:.2f} mol%<br/>
+                <b>Condenser Temp:</b> {result['T'][0]:.2f} K<br/>
+                <b>Light BP:</b> {light_species.macro.boiling_point:.1f} K
+            </div>
+            """, unsafe_allow_html=True)
+        with sub_col2:
+            st.markdown(f"""
+            <div class="metric-card">
+                <h5>Bottoms Output</h5>
+                <b>Bottoms Fraction:</b> {result['bottoms_x']*100:.2f} mol%<br/>
+                <b>Reboiler Temp:</b> {result['T'][-1]:.2f} K<br/>
+                <b>Heavy BP:</b> {heavy_species.macro.boiling_point:.1f} K
+            </div>
+            """, unsafe_allow_html=True)
+            
         st.markdown(f"""
         <div class="metric-card">
-            <h4>Distillate Output</h4>
-            <b>Distillate Purity:</b> {result['distillate_x']*100:.2f} mol%<br/>
-            <b>Condenser Temp:</b> {result['T'][0]:.2f} K<br/>
-            <b>Boiling Point:</b> 351.5 K
-        </div>
-        """, unsafe_allow_html=True)
-    with col2:
-        st.markdown(f"""
-        <div class="metric-card">
-            <h4>Bottoms Output</h4>
-            <b>Bottoms Fraction:</b> {result['bottoms_x']*100:.2f} mol%<br/>
-            <b>Reboiler Temp:</b> {result['T'][-1]:.2f} K<br/>
-            <b>Water Boiling Point:</b> 373.15 K
-        </div>
-        """, unsafe_allow_html=True)
-    with col3:
-        st.markdown(f"""
-        <div class="metric-card">
-            <h4>Tray Hydraulics & Sizing</h4>
-            <b>Sized Diameter:</b> {sizing['column_diameter_m']:.2f} meters<br/>
+            <h5>Column Internals & Hydraulics</h5>
+            <b>Sized Column Diameter:</b> {sizing['column_diameter_m']:.2f} m<br/>
+            <b>Sized Height:</b> {sizing['column_height_m']:.2f} m<br/>
             <b>Total Pressure Drop:</b> {sizing['total_dp_kPa']:.2f} kPa<br/>
             <b>Downcomer Backup:</b> {sizing['downcomer_backup_m']*1000:.1f} mm ({'FLOODING WARNING!' if sizing['flooding_warning'] else 'Normal'})
         </div>
         """, unsafe_allow_html=True)
 
     # Plots
-    st.write("### Binary Column Stage Profiles")
+    st.write("### Column Stage Profiles")
     plot_col1, plot_col2 = st.columns(2)
     with plot_col1:
         fig_profile = go.Figure()
-        fig_profile.add_trace(go.Scatter(x=result["stages"], y=result["x_light"], name="Liquid x (Ethanol)", line=dict(color="#0d9488", width=3)))
-        fig_profile.add_trace(go.Scatter(x=result["stages"], y=result["y_light"], name="Vapor y (Ethanol)", line=dict(color="#ef4444", width=2)))
-        fig_profile.update_layout(title="Composition Profiles", xaxis_title="Stage Number", yaxis_title="Mole Fraction (light component)", height=350)
+        fig_profile.add_trace(go.Scatter(x=result["stages"], y=result["x_light"], name=f"Liquid x ({light_species.name})", line=dict(color="#0d9488", width=3)))
+        fig_profile.add_trace(go.Scatter(x=result["stages"], y=result["y_light"], name=f"Vapor y ({light_species.name})", line=dict(color="#ef4444", width=2)))
+        fig_profile.update_layout(title="Composition Profiles", xaxis_title="Stage Number", yaxis_title="Mole Fraction", height=350)
         st.plotly_chart(fig_profile, use_container_width=True)
         
     with plot_col2:
@@ -371,21 +404,21 @@ elif simulation_mode == "Distillation Sizing & Hydraulics (C-101)":
     render_mermaid(layout.to_mermaid())
 
 elif simulation_mode == "Hydrocarbon PT Phase Envelope (PR-EOS)":
-    st.write("### Hydrocarbon Vapor-Liquid Equilibrium (VLE)")
-    st.markdown("""
-        *This module calculates the phase boundaries for a binary hydrocarbon mixture (Methane-Ethane) using the **Peng-Robinson Equation of State (PR-EOS)**.*
-    """)
+    st.write("### Multi-component Phase Envelope Solver")
     
-    st.sidebar.subheader("Hydrocarbon Mixture Composition")
-    methane_fraction = st.sidebar.slider("Methane Mole Fraction", 0.05, 0.95, 0.40, 0.05)
+    st.sidebar.subheader("Chemical Mixture Selection")
+    comp1_name = st.sidebar.selectbox("Select Component 1", list(species_map.keys()), index=2)
+    comp2_name = st.sidebar.selectbox("Select Component 2", list(species_map.keys()), index=3)
+    
+    comp1 = species_map[comp1_name]
+    comp2 = species_map[comp2_name]
+    
+    st.sidebar.subheader("Mixture Fraction Configuration")
+    methane_fraction = st.sidebar.slider(f"{comp1_name} Mole Fraction", 0.05, 0.95, 0.40, 0.05)
     ethane_fraction = 1.0 - methane_fraction
     
-    # Load Hydrocarbons metadata
-    methane = ChemicalDatabaseLoader.get_methane_metadata()
-    ethane = ChemicalDatabaseLoader.get_ethane_metadata()
-    
-    species_list = [methane, ethane]
-    composition = {methane.id: methane_fraction, ethane.id: ethane_fraction}
+    species_list = [comp1, comp2]
+    composition = {comp1.id: methane_fraction, comp2.id: ethane_fraction}
     
     # Show warning if external database is unavailable
     if Thermodynamics.db_mode == "external":
@@ -405,7 +438,7 @@ elif simulation_mode == "Hydrocarbon PT Phase Envelope (PR-EOS)":
     fig_env.add_trace(go.Scatter(x=envelope["bubble_T_K"], y=envelope["pressures_kPa"], name="Bubble Point Curve (Liquid)", line=dict(color="#0d9488", width=3)))
     fig_env.add_trace(go.Scatter(x=envelope["dew_T_K"], y=envelope["pressures_kPa"], name="Dew Point Curve (Vapor)", line=dict(color="#ef4444", width=3, dash="dash")))
     fig_env.update_layout(
-        title=f"Methane-Ethane PT Phase Envelope ({methane_fraction*100:.0f}% Methane / {ethane_fraction*100:.0f}% Ethane)",
+        title=f"{comp1_name}-{comp2_name} PT Phase Envelope ({methane_fraction*100:.0f}% {comp1_name} / {ethane_fraction*100:.0f}% {comp2_name})",
         xaxis_title="Temperature (Kelvin)",
         yaxis_title="Pressure (kPa)",
         height=500
@@ -416,9 +449,9 @@ elif simulation_mode == "Hydrocarbon PT Phase Envelope (PR-EOS)":
     st.write("### Single Point VLE Flash Solver")
     col1, col2 = st.columns(2)
     with col1:
-        test_T = st.slider("Flash Temperature (K)", 150.0, 310.0, 200.0, 5.0)
+        test_T = st.slider("Flash Temperature (K)", 100.0, 400.0, 200.0, 5.0)
     with col2:
-        test_P = st.slider("Flash Pressure (kPa)", 200.0, 3500.0, 1500.0, 50.0)
+        test_P = st.slider("Flash Pressure (kPa)", 200.0, 4500.0, 1500.0, 50.0)
         
     res = Thermodynamics.solve_tp_flash(species_list, composition, test_T, test_P * 1000.0)
     
@@ -427,18 +460,15 @@ elif simulation_mode == "Hydrocarbon PT Phase Envelope (PR-EOS)":
         st.metric("Vapor Fraction (beta)", f"{res['beta']*100:.2f} %")
     with col4:
         st.write("**Liquid Phase Compositions (x)**")
-        st.write(f"- Methane: {res['x']['methane']*100:.2f} mol%")
-        st.write(f"- Ethane: {res['x']['ethane']*100:.2f} mol%")
+        st.write(f"- {comp1_name}: {res['x'].get(comp1.id, 0.0)*100:.2f} mol%")
+        st.write(f"- {comp2_name}: {res['x'].get(comp2.id, 0.0)*100:.2f} mol%")
     with col5:
         st.write("**Vapor Phase Compositions (y)**")
-        st.write(f"- Methane: {res['y']['methane']*100:.2f} mol%")
-        st.write(f"- Ethane: {res['y']['ethane']*100:.2f} mol%")
+        st.write(f"- {comp1_name}: {res['y'].get(comp1.id, 0.0)*100:.2f} mol%")
+        st.write(f"- {comp2_name}: {res['y'].get(comp2.id, 0.0)*100:.2f} mol%")
 
 elif simulation_mode == "Electrolyte Equilibrium & Activity":
     st.write("### Electrolyte Systems modeling (Aspen Plus style)")
-    st.markdown("""
-        *Choose between e-NRTL activity coefficient corrections or full chemical equilibrium solvers for aqueous electrolyte systems.*
-    """)
     
     electrolyte_option = st.radio(
         "Select Electrolyte Engine Mode",
@@ -455,7 +485,7 @@ elif simulation_mode == "Electrolyte Equilibrium & Activity":
             m_temp = st.slider("System Temperature (K)", 273.15, 373.15, 298.15, 1.0)
             
         charges = {'Na+': 1, 'Cl-': -1, 'water': 0}
-        molalities = {'Na+': m_na, 'Cl-': m_cl, 'water': 55.5} # ~55.5 mol/kg for water
+        molalities = {'Na+': m_na, 'Cl-': m_cl, 'water': 55.5}
         
         coeffs = ElectrolyteModel.calculate_enrtl(charges, molalities, m_temp)
         
@@ -493,9 +523,6 @@ elif simulation_mode == "Electrolyte Equilibrium & Activity":
 
 elif simulation_mode == "Pressure-Flow Network Solver":
     st.write("### Pressure-Flow Valve Dynamics (HYSYS-style)")
-    st.markdown("""
-        *Dynamic flows are driven by pressure differentials ($\Delta P$). Adjust valve openings to observe pressure-flow adjustments in real-time.*
-    """)
     
     st.sidebar.subheader("Pressure Boundaries")
     p_source = st.sidebar.slider("Inlet Source Pressure (kPa)", 150.0, 500.0, 300.0, 10.0) * 1000.0
@@ -517,7 +544,7 @@ elif simulation_mode == "Pressure-Flow Network Solver":
     with col5:
         st.metric("Network Flow Rate", f"{flow:.3f} mol/s")
         
-    # Render simple Mermaid P&ID of valve network
+    # Render P&ID of valve network
     st.write("### Valve Network topology")
     layout = PIDLayout("Valve Network P&ID")
     layout.add_equipment("Source", f"Source Boundary\\n{p_source/1000:.1f} kPa")
@@ -532,3 +559,119 @@ elif simulation_mode == "Pressure-Flow Network Solver":
     layout.add_process_stream("V2", "Sink")
     
     render_mermaid(layout.to_mermaid())
+
+elif simulation_mode == "Interactive Flowsheet Designer":
+    st.write("### Interactive Flowsheet Topology Builder (HYSYS-style)")
+    st.markdown("""
+        *Instantiate process equipment, link streams to construct workflows, set inlet boundaries, and run the flowsheet.*
+    """)
+    
+    # Initialize session state for custom flowsheet
+    if "flow_units" not in st.session_state:
+        st.session_state.flow_units = {
+            "FeedPump": "Pump",
+            "CoolValve": "ControlValve",
+            "Reactor": "Bioreactor"
+        }
+    if "flow_connections" not in st.session_state:
+        st.session_state.flow_connections = [
+            {"from": "FeedPump", "to": "CoolValve", "stream": "S-102"},
+            {"from": "CoolValve", "to": "Reactor", "stream": "S-103"}
+        ]
+    if "flow_boundaries" not in st.session_state:
+        st.session_state.flow_boundaries = {
+            "S-101": {"T": 298.15, "P": 300.0, "F": 10.0, "z": "Water"}
+        }
+
+    # Sidebar controllers to manage flowsheet
+    st.sidebar.subheader("Flowsheet Equipment Manager")
+    new_id = st.sidebar.text_input("New Node ID", "V-101")
+    new_type = st.sidebar.selectbox("New Node Type", ["Pump", "ControlValve", "Bioreactor", "DistillationColumn"])
+    if st.sidebar.button("Add Equipment Node"):
+        if new_id not in st.session_state.flow_units:
+            st.session_state.flow_units[new_id] = new_type
+            st.sidebar.success(f"Added {new_type} {new_id}")
+        else:
+            st.sidebar.error("Node ID already exists!")
+
+    st.sidebar.subheader("Flowsheet Connections")
+    conn_from = st.sidebar.selectbox("From Node", list(st.session_state.flow_units.keys()))
+    conn_to = st.sidebar.selectbox("To Node", list(st.session_state.flow_units.keys()))
+    conn_stream = st.sidebar.text_input("Stream ID", "S-104")
+    if st.sidebar.button("Connect Nodes"):
+        if conn_from == conn_to:
+            st.sidebar.error("Cannot connect node to itself!")
+        else:
+            st.session_state.flow_connections.append({
+                "from": conn_from,
+                "to": conn_to,
+                "stream": conn_stream
+            })
+            st.sidebar.success(f"Connected {conn_from} -> {conn_to} via {conn_stream}")
+
+    if st.sidebar.button("Clear Flowsheet"):
+        st.session_state.flow_units = {"FeedPump": "Pump", "CoolValve": "ControlValve", "Reactor": "Bioreactor"}
+        st.session_state.flow_connections = [{"from": "FeedPump", "to": "CoolValve", "stream": "S-102"}, {"from": "CoolValve", "to": "Reactor", "stream": "S-103"}]
+        st.sidebar.warning("Flowsheet cleared to defaults.")
+
+    # Flowsheet Execution
+    st.subheader("Flowsheet Topology & Connected workflow")
+    
+    # Render Mermaid diagram
+    flow_layout = PIDLayout("Custom Flowsheet P&ID")
+    for uid, utype in st.session_state.flow_units.items():
+        if utype == "ControlValve":
+            flow_layout.add_valve(uid, f"{uid}\\n({utype})")
+        else:
+            flow_layout.add_equipment(uid, f"{uid}\\n({utype})")
+            
+    for conn in st.session_state.flow_connections:
+        flow_layout.add_process_stream(conn["from"], conn["to"], conn["stream"])
+        
+    render_mermaid(flow_layout.to_mermaid())
+    
+    # Display details of custom flowsheet
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write("#### Active Equipment Nodes")
+        st.write(st.session_state.flow_units)
+    with col2:
+        st.write("#### Active Stream Connections")
+        st.dataframe(st.session_state.flow_connections)
+
+    # Solve the flowsheet sequentially
+    st.write("### Sequential Simulation Outputs")
+    # Simulate a forward propagation along the chain
+    solved_data = []
+    current_temp = 298.15
+    current_pres = 101325.0
+    current_flow = 10.0 # mol/s
+    
+    # Topological traverse approximation
+    ordered_nodes = ["FeedPump", "CoolValve", "Reactor"]
+    for node in ordered_nodes:
+        if node in st.session_state.flow_units:
+            ntype = st.session_state.flow_units[node]
+            if ntype == "Pump":
+                current_pres += 150000.0  # pump raises pressure
+                current_temp += 0.5       # tiny thermal compression
+                action = "Pressurize Feed Stream (+150 kPa)"
+            elif ntype == "ControlValve":
+                current_pres -= 20000.0   # valve pressure drop
+                current_temp -= 0.1
+                action = "Flow regulating control (dP: 20 kPa)"
+            elif ntype == "Bioreactor":
+                action = "Constant volume fed-batch reaction"
+            else:
+                action = "Steady-state separation"
+                
+            solved_data.append({
+                "Equipment Node": node,
+                "Type": ntype,
+                "Outlet Temp (K)": f"{current_temp:.2f}",
+                "Outlet Pres (kPa)": f"{current_pres/1000:.1f}",
+                "Flow Rate (mol/s)": f"{current_flow:.2f}",
+                "Operating Action": action
+            })
+            
+    st.table(solved_data)
