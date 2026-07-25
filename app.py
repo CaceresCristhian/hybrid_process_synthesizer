@@ -129,6 +129,8 @@ if simulation_mode == "Jacketed Bioreactor (R-101)":
     # Run dynamic bioreactor simulation
     pid = PIDController(kp=kp, ki=ki, kd=kd, dt=0.05, u_min=0.0, u_max=10.0)
     bioreactor = JacketedBioreactor(
+        unit_id="R-101",
+        name="Jacketed Bioreactor",
         volume_init=1.0,
         s_in=180.0,
         u_coeff=600.0,
