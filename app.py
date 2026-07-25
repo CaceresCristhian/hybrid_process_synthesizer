@@ -22,6 +22,17 @@ from src.units.valves import ControlValve
 from src.visualization.pid_layout import PIDLayout
 from src.units.mixer import FlowsheetMixer
 
+# Force Streamlit to reload modified submodules to prevent caching errors on Streamlit Cloud
+import importlib
+import src.database.loader
+import src.visualization.svg_flowsheet
+import src.visualization.pid_layout
+import src.units.mixer
+importlib.reload(src.database.loader)
+importlib.reload(src.visualization.svg_flowsheet)
+importlib.reload(src.visualization.pid_layout)
+importlib.reload(src.units.mixer)
+
 # Define a custom inline Pump unit class for Flowsheet Designer
 class FlowsheetPump(BaseUnit):
     def __init__(self, unit_id: str, name: str, p_boost: float = 150000.0, efficiency: float = 0.75):
@@ -132,8 +143,16 @@ st.markdown(f'<div class="subtitle">v{APP_VERSION} ({RELEASE_STAGE}) | Dynamic P
 # Load global available species
 water_sp = ChemicalDatabaseLoader.get_water_metadata()
 ethanol_sp = ChemicalDatabaseLoader.get_ethanol_metadata()
+methane_sp = ChemicalDatabaseLoader.get_methane_metadata()
+ethane_sp = ChemicalDatabaseLoader.get_ethane_metadata()
 octane_sp = ChemicalDatabaseLoader.get_octane_metadata()
 phenol_sp = ChemicalDatabaseLoader.get_phenol_metadata()
+methanol_sp = ChemicalDatabaseLoader.get_methanol_metadata()
+acetone_sp = ChemicalDatabaseLoader.get_acetone_metadata()
+propane_sp = ChemicalDatabaseLoader.get_propane_metadata()
+butane_sp = ChemicalDatabaseLoader.get_butane_metadata()
+benzene_sp = ChemicalDatabaseLoader.get_benzene_metadata()
+toluene_sp = ChemicalDatabaseLoader.get_toluene_metadata()
 
 species_map = {
     "Ethanol": ethanol_sp,
@@ -141,7 +160,13 @@ species_map = {
     "Methane": methane_sp,
     "Ethane": ethane_sp,
     "Octane": octane_sp,
-    "Phenol": phenol_sp
+    "Phenol": phenol_sp,
+    "Methanol": methanol_sp,
+    "Acetone": acetone_sp,
+    "Propane": propane_sp,
+    "Butane": butane_sp,
+    "Benzene": benzene_sp,
+    "Toluene": toluene_sp
 }
 species_map_id = {
     "ethanol": ethanol_sp,
@@ -149,7 +174,13 @@ species_map_id = {
     "methane": methane_sp,
     "ethane": ethane_sp,
     "octane": octane_sp,
-    "phenol": phenol_sp
+    "phenol": phenol_sp,
+    "methanol": methanol_sp,
+    "acetone": acetone_sp,
+    "propane": propane_sp,
+    "butane": butane_sp,
+    "benzene": benzene_sp,
+    "toluene": toluene_sp
 }
 
 # Sidebar Selection

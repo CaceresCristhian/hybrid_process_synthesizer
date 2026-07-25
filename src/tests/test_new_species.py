@@ -39,5 +39,36 @@ class TestNewSpecies(unittest.TestCase):
         self.assertIn(phenol.id, flash_res["y"])
         print(f"Octane-Phenol Flash at 420 K, 2 bar Vapor Fraction: {flash_res['beta']*100:.2f}%")
 
+    def test_additional_compounds(self):
+        # Methanol
+        methanol = ChemicalDatabaseLoader.get_methanol_metadata()
+        self.assertEqual(methanol.formula, "CH4O")
+        self.assertAlmostEqual(methanol.macro.boiling_point, 337.8)
+        
+        # Acetone
+        acetone = ChemicalDatabaseLoader.get_acetone_metadata()
+        self.assertEqual(acetone.formula, "C3H6O")
+        self.assertAlmostEqual(acetone.macro.critical_temperature, 508.1)
+        
+        # Propane
+        propane = ChemicalDatabaseLoader.get_propane_metadata()
+        self.assertEqual(propane.formula, "C3H8")
+        self.assertAlmostEqual(propane.macro.acentric_factor, 0.152)
+        
+        # Butane
+        butane = ChemicalDatabaseLoader.get_butane_metadata()
+        self.assertEqual(butane.formula, "C4H10")
+        self.assertAlmostEqual(butane.macro.critical_pressure, 3.796e6)
+        
+        # Benzene
+        benzene = ChemicalDatabaseLoader.get_benzene_metadata()
+        self.assertEqual(benzene.formula, "C6H6")
+        self.assertAlmostEqual(benzene.micro.molecular_weight, 78.11)
+        
+        # Toluene
+        toluene = ChemicalDatabaseLoader.get_toluene_metadata()
+        self.assertEqual(toluene.formula, "C7H8")
+        self.assertAlmostEqual(toluene.macro.boiling_point, 383.8)
+
 if __name__ == "__main__":
     unittest.main()

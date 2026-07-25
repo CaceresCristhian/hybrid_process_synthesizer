@@ -177,6 +177,174 @@ class ChemicalDatabaseLoader:
             )
         )
 
+    @staticmethod
+    def get_methanol_metadata() -> ChemicalSpecies:
+        """Returns physical and chemical property metadata for Methanol (CH3OH)."""
+        return ChemicalSpecies(
+            id="methanol",
+            name="Methanol",
+            formula="CH4O",
+            micro=MicroScaleData(
+                molecular_weight=32.04,
+                electronegativities={"H": 2.20, "C": 2.55, "O": 3.44},
+                dipole_moment=1.70,
+                polarizability=3.2,
+                smiles="CO"
+            ),
+            macro=MacroScaleData(
+                boiling_point=337.8,
+                melting_point=175.6,
+                critical_temperature=512.6,
+                critical_pressure=8.09e6,
+                critical_volume=0.118,
+                acentric_factor=0.556,
+                cp_constants=[81.1, 0.0, 0.0, 0.0]
+            ),
+            system=SystemScaleData(
+                antoine_coefficients=[5.20409, 1581.341, -33.5]
+            )
+        )
+
+    @staticmethod
+    def get_acetone_metadata() -> ChemicalSpecies:
+        """Returns physical and chemical property metadata for Acetone (C3H6O)."""
+        return ChemicalSpecies(
+            id="acetone",
+            name="Acetone",
+            formula="C3H6O",
+            micro=MicroScaleData(
+                molecular_weight=58.08,
+                electronegativities={"H": 2.20, "C": 2.55, "O": 3.44},
+                dipole_moment=2.91,
+                polarizability=6.4,
+                smiles="CC(=O)C"
+            ),
+            macro=MacroScaleData(
+                boiling_point=329.4,
+                melting_point=178.2,
+                critical_temperature=508.1,
+                critical_pressure=4.7e6,
+                critical_volume=0.209,
+                acentric_factor=0.304,
+                cp_constants=[125.0, 0.0, 0.0, 0.0]
+            ),
+            system=SystemScaleData(
+                antoine_coefficients=[4.42448, 1312.253, -32.445]
+            )
+        )
+
+    @staticmethod
+    def get_propane_metadata() -> ChemicalSpecies:
+        """Returns physical and chemical property metadata for Propane (C3H8)."""
+        return ChemicalSpecies(
+            id="propane",
+            name="Propane",
+            formula="C3H8",
+            micro=MicroScaleData(
+                molecular_weight=44.10,
+                electronegativities={"H": 2.20, "C": 2.55},
+                dipole_moment=0.08,
+                polarizability=6.3,
+                smiles="CCC"
+            ),
+            macro=MacroScaleData(
+                boiling_point=231.1,
+                melting_point=85.5,
+                critical_temperature=369.83,
+                critical_pressure=4.25e6,
+                critical_volume=0.203,
+                acentric_factor=0.152,
+                cp_constants=[73.5, 0.0, 0.0, 0.0]
+            ),
+            system=SystemScaleData(
+                antoine_coefficients=[3.92724, 803.292, -26.11]
+            )
+        )
+
+    @staticmethod
+    def get_butane_metadata() -> ChemicalSpecies:
+        """Returns physical and chemical property metadata for Butane (C4H10)."""
+        return ChemicalSpecies(
+            id="butane",
+            name="Butane",
+            formula="C4H10",
+            micro=MicroScaleData(
+                molecular_weight=58.12,
+                electronegativities={"H": 2.20, "C": 2.55},
+                dipole_moment=0.0,
+                polarizability=8.2,
+                smiles="CCCC"
+            ),
+            macro=MacroScaleData(
+                boiling_point=272.7,
+                melting_point=134.9,
+                critical_temperature=425.12,
+                critical_pressure=3.796e6,
+                critical_volume=0.255,
+                acentric_factor=0.200,
+                cp_constants=[97.5, 0.0, 0.0, 0.0]
+            ),
+            system=SystemScaleData(
+                antoine_coefficients=[4.35576, 1175.581, -2.071]
+            )
+        )
+
+    @staticmethod
+    def get_benzene_metadata() -> ChemicalSpecies:
+        """Returns physical and chemical property metadata for Benzene (C6H6)."""
+        return ChemicalSpecies(
+            id="benzene",
+            name="Benzene",
+            formula="C6H6",
+            micro=MicroScaleData(
+                molecular_weight=78.11,
+                electronegativities={"H": 2.20, "C": 2.55},
+                dipole_moment=0.0,
+                polarizability=10.3,
+                smiles="c1ccccc1"
+            ),
+            macro=MacroScaleData(
+                boiling_point=353.2,
+                melting_point=278.7,
+                critical_temperature=562.05,
+                critical_pressure=4.895e6,
+                critical_volume=0.259,
+                acentric_factor=0.210,
+                cp_constants=[136.1, 0.0, 0.0, 0.0]
+            ),
+            system=SystemScaleData(
+                antoine_coefficients=[4.02232, 1206.531, -52.886]
+            )
+        )
+
+    @staticmethod
+    def get_toluene_metadata() -> ChemicalSpecies:
+        """Returns physical and chemical property metadata for Toluene (C7H8)."""
+        return ChemicalSpecies(
+            id="toluene",
+            name="Toluene",
+            formula="C7H8",
+            micro=MicroScaleData(
+                molecular_weight=92.14,
+                electronegativities={"H": 2.20, "C": 2.55},
+                dipole_moment=0.36,
+                polarizability=12.3,
+                smiles="Cc1ccccc1"
+            ),
+            macro=MacroScaleData(
+                boiling_point=383.8,
+                melting_point=178.2,
+                critical_temperature=591.8,
+                critical_pressure=4.1e6,
+                critical_volume=0.316,
+                acentric_factor=0.264,
+                cp_constants=[156.0, 0.0, 0.0, 0.0]
+            ),
+            system=SystemScaleData(
+                antoine_coefficients=[4.07827, 1343.943, -53.773]
+            )
+        )
+
     @classmethod
     def load_binary_system(cls, system_type: str = "ethanol_water") -> dict:
         """Loads a standard validation binary system."""
