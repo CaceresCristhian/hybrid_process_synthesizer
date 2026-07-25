@@ -838,6 +838,18 @@ elif simulation_mode == "Interactive Flowsheet Designer":
                         out_st.F = in_st.F
                         out_st.z = in_st.z.copy()
 
+    # Compile flowsheet layout for Mermaid P&ID representation
+    flow_layout = PIDLayout("Custom Flowsheet P&ID")
+    for uid, udata in st.session_state.fs_units.items():
+        utype = udata["type"]
+        if utype == "ControlValve":
+            flow_layout.add_valve(uid, f"{uid}\\n({utype})")
+        else:
+            flow_layout.add_equipment(uid, f"{uid}\\n({utype})")
+            
+    for conn in st.session_state.fs_connections:
+        flow_layout.add_process_stream(conn["from"], conn["to"], conn["stream"])
+
     # RENDER INTERACTIVE TABS
     tab_pid, tab_mass, tab_energy = st.tabs([
         "Flowsheet Canvas & P&ID", 
@@ -867,6 +879,42 @@ elif simulation_mode == "Interactive Flowsheet Designer":
                     "Calculated Sizing Metrics": sizing_str
                 })
             st.table(equip_summary)
+
+        st.write("#### Edit or Remove Flowsheet Items")
+        del_col1, del_col2 = st.columns(2)
+        with del_col1:
+            st.write("**Remove Equipment Node**")
+            u_to_delete = st.selectbox("Select Node to Delete", [""] + list(st.session_state.fs_units.keys()), key="del_u")
+            if st.button("Delete Node"):
+                if u_to_delete:
+                    # Remove unit
+                    del st.session_state.fs_units[u_to_delete]
+                    # Remove connections
+                    st.session_state.fs_connections = [
+                        c for c in st.session_state.fs_connections 
+                        if c["from"] != u_to_delete and c["to"] != u_to_delete
+                    ]
+                    st.success(f"Deleted equipment {u_to_delete} and associated streams.")
+                    st.rerun()
+        with del_col2:
+            st.write("**Remove Stream Connection**")
+            s_to_delete_lbl = st.selectbox(
+                "Select Stream to Delete",
+                [""] + [f"{c['stream']}: {c['from']} -> {c['to']}" for c in st.session_state.fs_connections],
+                key="del_s"
+            )
+            if st.button("Delete Stream"):
+                if s_to_delete_lbl:
+                    stream_id_del = s_to_delete_lbl.split(":")[0]
+                    # Remove connection
+                    st.session_state.fs_connections = [
+                        c for c in st.session_state.fs_connections if c["stream"] != stream_id_del
+                    ]
+                    # Remove boundary if present
+                    if stream_id_del in st.session_state.fs_boundaries:
+                        del st.session_state.fs_boundaries[stream_id_del]
+                    st.success(f"Deleted stream {stream_id_del}.")
+                    st.rerun()
             
     with tab_mass:
         st.write("#### Mass Balance Summary Sheet")
