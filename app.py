@@ -840,6 +840,20 @@ elif simulation_mode == "Interactive Flowsheet Designer":
 
     # Compile flowsheet layout for Mermaid P&ID representation
     flow_layout = PIDLayout("Custom Flowsheet P&ID")
+    
+    has_feed_boundary = False
+    has_product_boundary = False
+    for conn in st.session_state.fs_connections:
+        if conn["from"] == "Feed Boundary":
+            has_feed_boundary = True
+        if conn["to"] == "Product Boundary":
+            has_product_boundary = True
+             
+    if has_feed_boundary:
+        flow_layout.add_equipment("Feed_Boundary", "Feed Boundary")
+    if has_product_boundary:
+        flow_layout.add_equipment("Product_Boundary", "Product Boundary")
+
     for uid, udata in st.session_state.fs_units.items():
         utype = udata["type"]
         if utype == "ControlValve":
@@ -848,7 +862,9 @@ elif simulation_mode == "Interactive Flowsheet Designer":
             flow_layout.add_equipment(uid, f"{uid}\\n({utype})")
             
     for conn in st.session_state.fs_connections:
-        flow_layout.add_process_stream(conn["from"], conn["to"], conn["stream"])
+        from_id = conn["from"].replace(" ", "_")
+        to_id = conn["to"].replace(" ", "_")
+        flow_layout.add_process_stream(from_id, to_id, conn["stream"])
 
     # RENDER INTERACTIVE TABS
     tab_pid, tab_mass, tab_energy = st.tabs([
@@ -868,47 +884,55 @@ elif simulation_mode == "Interactive Flowsheet Designer":
         if len(units_obj_list) == 0:
             st.info("No equipment nodes placed.")
         else:
-            equip_summary = []
+            # Header Row
+            h_col1, h_col2, h_col3, h_col4, h_col5 = st.columns([1, 1, 1.2, 4, 1])
+            h_col1.markdown("**Node ID**")
+            h_col2.markdown("**Type**")
+            h_col3.markdown("**Fluid Package**")
+            h_col4.markdown("**Calculated Sizing Metrics**")
+            h_col5.markdown("**Action**")
+            
             for u in units_obj_list:
                 u.size_equipment()
                 sizing_str = ", ".join(f"{k}: {v:.2f}" if isinstance(v, float) else f"{k}: {v}" for k, v in u.sizing_results.items())
-                equip_summary.append({
-                    "Node ID": u.unit_id,
-                    "Type": st.session_state.fs_units[u.unit_id]["type"],
-                    "Fluid Package (Base)": u.thermo_base,
-                    "Calculated Sizing Metrics": sizing_str
-                })
-            st.table(equip_summary)
-
-        st.write("#### Edit or Remove Flowsheet Items")
-        del_col1, del_col2 = st.columns(2)
-        with del_col1:
-            st.write("**Remove Equipment Node**")
-            u_to_delete = st.selectbox("Select Node to Delete", [""] + list(st.session_state.fs_units.keys()), key="del_u")
-            if st.button("Delete Node"):
-                if u_to_delete:
+                utype = st.session_state.fs_units[u.unit_id]["type"]
+                
+                row_col1, row_col2, row_col3, row_col4, row_col5 = st.columns([1, 1, 1.2, 4, 1])
+                row_col1.write(u.unit_id)
+                row_col2.write(utype)
+                row_col3.write(u.thermo_base)
+                row_col4.write(sizing_str)
+                if row_col5.button("Delete", key=f"del_node_btn_{u.unit_id}"):
                     # Remove unit
-                    del st.session_state.fs_units[u_to_delete]
+                    del st.session_state.fs_units[u.unit_id]
                     # Remove connections
                     st.session_state.fs_connections = [
                         c for c in st.session_state.fs_connections 
-                        if c["from"] != u_to_delete and c["to"] != u_to_delete
+                        if c["from"] != u.unit_id and c["to"] != u.unit_id
                     ]
-                    st.success(f"Deleted equipment {u_to_delete} and associated streams.")
+                    st.success(f"Deleted equipment {u.unit_id} and associated streams.")
                     st.rerun()
-        with del_col2:
-            st.write("**Remove Stream Connection**")
-            s_to_delete_lbl = st.selectbox(
-                "Select Stream to Delete",
-                [""] + [f"{c['stream']}: {c['from']} -> {c['to']}" for c in st.session_state.fs_connections],
-                key="del_s"
-            )
-            if st.button("Delete Stream"):
-                if s_to_delete_lbl:
-                    stream_id_del = s_to_delete_lbl.split(":")[0]
+
+        st.write("#### Active Stream Connections")
+        if len(st.session_state.fs_connections) == 0:
+            st.info("No stream connections defined.")
+        else:
+            sh_col1, sh_col2, sh_col3, sh_col4 = st.columns([1.5, 2, 2, 1.2])
+            sh_col1.markdown("**Stream ID**")
+            sh_col2.markdown("**From Node**")
+            sh_col3.markdown("**To Node**")
+            sh_col4.markdown("**Action**")
+            
+            for c in st.session_state.fs_connections:
+                s_col1, s_col2, s_col3, s_col4 = st.columns([1.5, 2, 2, 1.2])
+                s_col1.write(c["stream"])
+                s_col2.write(c["from"])
+                s_col3.write(c["to"])
+                if s_col4.button("Delete", key=f"del_stream_btn_{c['stream']}"):
+                    stream_id_del = c["stream"]
                     # Remove connection
                     st.session_state.fs_connections = [
-                        c for c in st.session_state.fs_connections if c["stream"] != stream_id_del
+                        conn for conn in st.session_state.fs_connections if conn["stream"] != stream_id_del
                     ]
                     # Remove boundary if present
                     if stream_id_del in st.session_state.fs_boundaries:
