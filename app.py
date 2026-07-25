@@ -651,6 +651,10 @@ elif simulation_mode == "Interactive Flowsheet Designer":
     add_type = st.sidebar.selectbox("Equipment Type", ["Pump", "ControlValve", "Bioreactor", "DistillationColumn"])
     local_pkg = st.sidebar.selectbox("Local Fluid Package", ["Default (Global)", "Ideal Gas / Activity model", "Peng-Robinson EOS", "e-NRTL Electrolytes", "PINN ML Surrogate"])
     
+    col_variation = "Sieve Tray Column"
+    if add_type == "DistillationColumn":
+        col_variation = st.sidebar.selectbox("Symbol Style", ["Sieve Tray Column", "Packed Bed Column"])
+        
     if st.sidebar.button("Add to Flowsheet"):
         if add_id in st.session_state.fs_units:
             st.sidebar.error(f"Node '{add_id}' already exists!")
@@ -662,7 +666,8 @@ elif simulation_mode == "Interactive Flowsheet Designer":
                 "thermo": st.session_state.fs_fluid_pkg if local_pkg == "Default (Global)" else local_pkg,
                 "opening": 1.0,     # Valve parameter
                 "p_boost": 150000.0, # Pump parameter
-                "volume": 2.0       # Reactor parameter
+                "volume": 2.0,       # Reactor parameter
+                "variation": col_variation
             }
             st.sidebar.success(f"Added {add_type} {add_id}")
             
@@ -878,7 +883,14 @@ elif simulation_mode == "Interactive Flowsheet Designer":
         if len(st.session_state.fs_connections) == 0:
             st.info("Flowsheet is empty. Define stream connections in the sidebar to visualize.")
         else:
-            render_mermaid(flow_layout.to_mermaid())
+            view_mode = st.radio("Render Engine Mode", ["CAD Vector Flowsheet (SVG)", "Mermaid Logic Flowsheet"], horizontal=True)
+            if view_mode == "CAD Vector Flowsheet (SVG)":
+                from src.visualization.svg_flowsheet import SVGFlowsheet
+                variations = {uid: udata.get("variation", "Sieve Tray Column") for uid, udata in st.session_state.fs_units.items()}
+                svg_code = SVGFlowsheet.generate_flowsheet_svg(st.session_state.fs_units, st.session_state.fs_connections, variations)
+                st.write(svg_code, unsafe_allow_html=True)
+            else:
+                render_mermaid(flow_layout.to_mermaid())
             
         st.write("#### Sized Equipment Parameters")
         if len(units_obj_list) == 0:
@@ -900,7 +912,7 @@ elif simulation_mode == "Interactive Flowsheet Designer":
                 row_col1, row_col2, row_col3, row_col4, row_col5 = st.columns([1, 1, 1.2, 4, 1])
                 row_col1.write(u.unit_id)
                 row_col2.write(utype)
-                row_col3.write(u.thermo_base)
+                row_col3.write(f"{u.thermo_base} ({st.session_state.fs_units[u.unit_id].get('variation', 'Standard')})")
                 row_col4.write(sizing_str)
                 if row_col5.button("Delete", key=f"del_node_btn_{u.unit_id}"):
                     # Remove unit
