@@ -132,20 +132,24 @@ st.markdown(f'<div class="subtitle">v{APP_VERSION} ({RELEASE_STAGE}) | Dynamic P
 # Load global available species
 water_sp = ChemicalDatabaseLoader.get_water_metadata()
 ethanol_sp = ChemicalDatabaseLoader.get_ethanol_metadata()
-methane_sp = ChemicalDatabaseLoader.get_methane_metadata()
-ethane_sp = ChemicalDatabaseLoader.get_ethane_metadata()
+octane_sp = ChemicalDatabaseLoader.get_octane_metadata()
+phenol_sp = ChemicalDatabaseLoader.get_phenol_metadata()
 
 species_map = {
     "Ethanol": ethanol_sp,
     "Water": water_sp,
     "Methane": methane_sp,
-    "Ethane": ethane_sp
+    "Ethane": ethane_sp,
+    "Octane": octane_sp,
+    "Phenol": phenol_sp
 }
 species_map_id = {
     "ethanol": ethanol_sp,
     "water": water_sp,
     "methane": methane_sp,
-    "ethane": ethane_sp
+    "ethane": ethane_sp,
+    "octane": octane_sp,
+    "phenol": phenol_sp
 }
 
 # Sidebar Selection
@@ -225,7 +229,9 @@ if simulation_mode == "Jacketed Bioreactor (R-101)":
     col_img, col_metrics = st.columns([2, 3])
     with col_img:
         st.write("#### Bioreactor Equipment Figure")
-        st.image("data/bioreactor_schematic.jpg", caption="Jacketed Bioreactor Process Diagram", use_container_width=True)
+        from src.visualization.svg_flowsheet import SVGFlowsheet
+        bio_svg = SVGFlowsheet.draw_bioreactor_figure_svg(max_vol, t_shell)
+        st.write(bio_svg, unsafe_allow_html=True)
         
     with col_metrics:
         st.write("#### Nominal Sizing & Metrics")
@@ -365,7 +371,9 @@ elif simulation_mode == "Distillation Sizing & Hydraulics (C-101)":
     col_img, col_metrics = st.columns([2, 3])
     with col_img:
         st.write("#### Distillation Equipment Figure")
-        st.image("data/distillation_schematic.jpg", caption="Distillation Column Process Diagram", use_container_width=True)
+        from src.visualization.svg_flowsheet import SVGFlowsheet
+        dist_svg = SVGFlowsheet.draw_distillation_figure_svg(sizing, result)
+        st.write(dist_svg, unsafe_allow_html=True)
         
     with col_metrics:
         st.write("#### Nominal Outputs & Sizing")
@@ -625,13 +633,23 @@ elif simulation_mode == "Interactive Flowsheet Designer":
     # SIDEBAR: FLOWSHEET BUILDER CONTROLLERS
     # ==========================================
     st.sidebar.subheader("1. Fluid Package & Agents")
-    selected_sp = []
-    for sp_key in species_map.keys():
-        chk = st.sidebar.checkbox(sp_key, value=(sp_key in st.session_state.fs_species))
-        if chk:
-            selected_sp.append(sp_key)
-            
-    st.session_state.fs_species = selected_sp
+    search_list = ["Search and Add Chemical..."] + [k for k in species_map.keys() if k not in st.session_state.fs_species]
+    selected_add_sp = st.sidebar.selectbox("Lookup Compounds", search_list, index=0)
+    
+    if selected_add_sp != "Search and Add Chemical...":
+        st.session_state.fs_species.append(selected_add_sp)
+        st.rerun()
+        
+    st.sidebar.write("**Active Process Chemicals:**")
+    if not st.session_state.fs_species:
+        st.sidebar.info("No chemicals selected. Search above.")
+    else:
+        for sp_name in st.session_state.fs_species:
+            sp_cols = st.sidebar.columns([4, 1])
+            sp_cols[0].write(f"- {sp_name} ({species_map[sp_name].formula})")
+            if sp_cols[1].button("❌", key=f"del_sp_btn_{sp_name}"):
+                st.session_state.fs_species.remove(sp_name)
+                st.rerun()
     
     st.session_state.fs_fluid_pkg = st.sidebar.selectbox(
         "Global Thermodynamic Base",
@@ -851,19 +869,6 @@ elif simulation_mode == "Interactive Flowsheet Designer":
     # Compile flowsheet layout for Mermaid P&ID representation
     flow_layout = PIDLayout("Custom Flowsheet P&ID")
     
-    has_feed_boundary = False
-    has_product_boundary = False
-    for conn in st.session_state.fs_connections:
-        if conn["from"] == "Feed Boundary":
-            has_feed_boundary = True
-        if conn["to"] == "Product Boundary":
-            has_product_boundary = True
-             
-    if has_feed_boundary:
-        flow_layout.add_equipment("Feed_Boundary", "Feed Boundary")
-    if has_product_boundary:
-        flow_layout.add_equipment("Product_Boundary", "Product Boundary")
-
     for uid, udata in st.session_state.fs_units.items():
         utype = udata["type"]
         if utype == "ControlValve":
@@ -871,10 +876,32 @@ elif simulation_mode == "Interactive Flowsheet Designer":
         else:
             flow_layout.add_equipment(uid, f"{uid}\\n({utype})")
             
+    feed_nodes_m = []
+    prod_nodes_m = []
+    
     for conn in st.session_state.fs_connections:
-        from_id = conn["from"].replace(" ", "_")
-        to_id = conn["to"].replace(" ", "_")
-        flow_layout.add_process_stream(from_id, to_id, conn["stream"])
+        src = conn["from"]
+        dst = conn["to"]
+        s_id = conn["stream"]
+        
+        if src == "Feed Boundary":
+            src_id = f"Feed_{s_id}"
+            feed_nodes_m.append((src_id, f"Feed ({s_id})"))
+        else:
+            src_id = src.replace(" ", "_")
+            
+        if dst == "Product Boundary":
+            dst_id = f"Product_{s_id}"
+            prod_nodes_m.append((dst_id, f"Product ({s_id})"))
+        else:
+            dst_id = dst.replace(" ", "_")
+            
+        flow_layout.add_process_stream(src_id, dst_id, s_id)
+        
+    if feed_nodes_m:
+        flow_layout.add_subgraph("Feed Boundaries", feed_nodes_m)
+    if prod_nodes_m:
+        flow_layout.add_subgraph("Product Boundaries", prod_nodes_m)
 
     # Global species map for tooltips and summaries
     mapped_sp = {sp.id: sp for sp in [species_map[k] for k in st.session_state.fs_species]}

@@ -5,6 +5,7 @@ class PIDLayout:
         self.name = name
         self.nodes = []
         self.edges = []
+        self.subgraphs = {} # maps group_name -> list of (node_id, label)
 
     def add_equipment(self, element_id: str, label: str):
         self.nodes.append((element_id, f'["{label}"]', "equipment"))
@@ -15,6 +16,10 @@ class PIDLayout:
     def add_instrument(self, element_id: str, label: str):
         self.nodes.append((element_id, f'(("{label}"))', "instrument"))
 
+    def add_subgraph(self, group_name: str, nodes_list: list):
+        """Adds a labeled subgraph grouping in the Mermaid diagram."""
+        self.subgraphs[group_name] = nodes_list
+
     def add_process_stream(self, from_id: str, to_id: str, label: str = ""):
         self.edges.append((from_id, to_id, f"|{label}|" if label else ""))
 
@@ -22,11 +27,27 @@ class PIDLayout:
         self.edges.append((from_id, to_id, f"-.->|{label}|" if label else "-.->"))
 
     def to_mermaid(self) -> str:
-        """Generates compiled Mermaid syntax block."""
-        lines = ["graph TD", "    %% Equipment and Instruments %%"]
+        """Generates compiled Mermaid syntax block with subgraphs."""
+        lines = ["graph TD"]
         
+        # 1. Render Subgraphs first
+        if self.subgraphs:
+            lines.append("    %% Subgraphs %%")
+            for group, nodes_list in self.subgraphs.items():
+                group_id = group.replace(" ", "_")
+                lines.append(f"    subgraph {group_id} [\"{group}\"]")
+                for nid, nlbl in nodes_list:
+                    lines.append(f"        {nid}[\"{nlbl}\"]")
+                lines.append("    end")
+                
+        # Set of nodes rendered in subgraphs to avoid double-definition
+        subg_nodes = set(nid for nodes_list in self.subgraphs.values() for nid, _ in nodes_list)
+        
+        # 2. Render normal nodes
+        lines.append("\n    %% Equipment and Instruments %%")
         for elem_id, symbol, cls in self.nodes:
-            lines.append(f"    {elem_id}{symbol}")
+            if elem_id not in subg_nodes:
+                lines.append(f"    {elem_id}{symbol}")
             
         lines.append("\n    %% Stream and Signals %%")
         for f, t, label in self.edges:

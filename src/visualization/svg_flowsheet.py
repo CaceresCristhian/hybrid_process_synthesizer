@@ -384,3 +384,110 @@ class SVGFlowsheet:
 
         svg.append('</svg>')
         return "\n".join(svg)
+
+    @staticmethod
+    def draw_bioreactor_figure_svg(max_vol: float, t_shell: float) -> str:
+        """
+        Draws a detailed vector schematic of a Jacketed Bioreactor
+        with interactive hovers on all parts (vessel, jacket, impeller, motor).
+        """
+        svg = [
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" width="100%" height="100%">',
+            '  <rect width="400" height="300" fill="#fafafa" stroke="#e2e8f0" stroke-width="1"/>',
+            '  <!-- 1. Cooling Jacket (Back Layer) -->',
+            '  <g>',
+            f'    <title>Cooling Jacket\nASME Material: SS-316\nU-Coefficient: 600 W/m²·K\nExchange Area: 5.0 m²\nDesign Pressure: 3.5 bar</title>',
+            '    <path d="M 105 90 L 105 220 A 95 95 0 0 0 295 220 L 295 90" fill="none" stroke="#2dd4bf" stroke-width="12" stroke-linecap="round" />',
+            '  </g>',
+            '  <!-- 2. Vessel Body (Middle Layer) -->',
+            '  <g>',
+            f'    <title>Vessel Shell\nMax Volume: {max_vol:.2f} m³\nCalculated Wall Thickness: {t_shell:.2f} mm\nASME Material: SS-316\nHeight-to-Diameter Ratio: 3:1</title>',
+            '    <rect x="120" y="50" width="160" height="180" rx="20" ry="20" fill="#f1f5f9" stroke="#334155" stroke-width="3" />',
+            '    <line x1="120" y1="90" x2="280" y2="90" stroke="#cbd5e1" stroke-dasharray="4 4" />',
+            '    <text x="200" y="80" font-family="Inter, sans-serif" font-size="10" fill="#64748b" text-anchor="middle">Liquid Level</text>',
+            '  </g>',
+            '  <!-- 3. Impeller Agitator -->',
+            '  <g>',
+            '    <title>Agitator Agitation System\nType: Rushton Turbine (Double Blade)\nDrive Motor: 1.5 kW AC\nPID Speed Control: 0 - 250 rpm</title>',
+            '    <!-- Motor block -->',
+            '    <rect x="180" y="10" width="40" height="40" rx="3" fill="#ef4444" stroke="#dc2626" stroke-width="2" />',
+            '    <text x="200" y="32" font-family="Inter, sans-serif" font-size="10" font-weight="bold" fill="#ffffff" text-anchor="middle">M</text>',
+            '    <!-- Shaft -->',
+            '    <line x1="200" y1="50" x2="200" y2="210" stroke="#475569" stroke-width="4" />',
+            '    <!-- Blade 1 -->',
+            '    <line x1="150" y1="150" x2="250" y2="150" stroke="#475569" stroke-width="6" stroke-linecap="round" />',
+            '    <rect x="150" y="142" width="12" height="16" fill="#334155" />',
+            '    <rect x="238" y="142" width="12" height="16" fill="#334155" />',
+            '    <!-- Blade 2 -->',
+            '    <line x1="150" y1="190" x2="250" y2="190" stroke="#475569" stroke-width="6" stroke-linecap="round" />',
+            '    <rect x="150" y="182" width="12" height="16" fill="#334155" />',
+            '    <rect x="238" y="182" width="12" height="16" fill="#334155" />',
+            '  </g>',
+            '  <!-- Labeling text overlay -->',
+            '  <text x="200" y="260" font-family="Inter, sans-serif" font-size="12" font-weight="bold" fill="#334155" text-anchor="middle">Jacketed Bioreactor Vessel (Stirred-Tank)</text>',
+            '  <text x="200" y="275" font-family="Inter, sans-serif" font-size="10" fill="#64748b" text-anchor="middle">Hover over parts to inspect calculated dimensions</text>',
+            '</svg>'
+        ]
+        return "\n".join(svg)
+
+    @staticmethod
+    def draw_distillation_figure_svg(sizing: dict, result: dict) -> str:
+        """
+        Draws a detailed vector schematic of a Distillation Column
+        with interactive hovers on all parts (shell, trays, condenser, reboiler).
+        """
+        dia = sizing.get("column_diameter_m", 0.50)
+        h = sizing.get("column_height_m", 10.20)
+        dp = sizing.get("dp_per_tray_Pa", 800.0)
+        total_dp = sizing.get("total_dp_kPa", 9.6)
+        dc_backup = sizing.get("downcomer_backup_m", 0.16)
+        
+        cond_temp = result.get("T", [351.5])[0] if "T" in result else 351.5
+        reboiler_temp = result.get("T", [373.15])[-1] if "T" in result else 373.15
+        purity = result.get("distillate_x", 0.80)
+        
+        svg = [
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 480" width="100%" height="100%">',
+            '  <rect width="400" height="480" fill="#fafafa" stroke="#e2e8f0" stroke-width="1"/>',
+            '  <!-- 1. Column Shell -->',
+            '  <g>',
+            f'    <title>Column Tower Shell\nSized Diameter: {dia:.2f} m\nTotal Height: {h:.2f} m\nASME Material: SS-316\nNumber of Sieve Trays: 12\nTotal Pressure Drop: {total_dp:.2f} kPa</title>',
+            '    <rect x="150" y="80" width="100" height="310" rx="15" ry="15" fill="#f1f5f9" stroke="#334155" stroke-width="3" />',
+            '  </g>',
+            '  <!-- 2. Sieve Trays inside -->',
+            '  <g>',
+            f'    <title>Sieve Trays Hydraulics\nTray Spacing: 0.60 m\nPressure Drop per Tray: {dp:.1f} Pa\nDowncomer Backup: {dc_backup*1000:.1f} mm\nFlooding Limit Margin: 80%</title>'
+        ]
+        
+        for i in range(1, 10):
+            tray_y = 80 + i * 31
+            svg.append(f'    <line x1="154" y1="{tray_y}" x2="246" y2="{tray_y}" stroke="#475569" stroke-width="1.5" stroke-dasharray="5 2" />')
+            if i % 2 == 0:
+                svg.append(f'    <line x1="154" y1="{tray_y}" x2="154" y2="{tray_y+15}" stroke="#475569" stroke-width="2" />')
+            else:
+                svg.append(f'    <line x1="246" y1="{tray_y}" x2="246" y2="{tray_y+15}" stroke="#475569" stroke-width="2" />')
+                
+        svg.append('  </g>')
+        
+        svg.extend([
+            '  <!-- 3. Condenser Loop -->',
+            '  <g>',
+            f'    <title>Overhead Condenser\nCondenser Temp: {cond_temp:.2f} K\nDistillate Purity: {purity*100:.2f} mol%\nReflux Ratio (R/D): 2.5</title>',
+            '    <path d="M 200 80 L 200 40 L 300 40 L 300 100 L 250 100" fill="none" stroke="#475569" stroke-width="2" />',
+            '    <rect x="275" y="50" width="50" height="30" rx="3" fill="#fee2e2" stroke="#ef4444" stroke-width="2" />',
+            '    <text x="300" y="68" font-family="Inter, sans-serif" font-size="9" fill="#991b1b" font-weight="bold" text-anchor="middle">COND</text>',
+            '  </g>',
+            '  <!-- 4. Reboiler Loop -->',
+            '  <g>',
+            f'    <title>Bottom Reboiler\nReboiler Temp: {reboiler_temp:.2f} K\nBoilup Ratio: 3.5</title>',
+            '    <path d="M 200 390 L 200 430 L 300 430 L 300 370 L 250 370" fill="none" stroke="#475569" stroke-width="2" />',
+            '    <rect x="275" y="385" width="50" height="30" rx="3" fill="#fee2e2" stroke="#ef4444" stroke-width="2" />',
+            '    <text x="300" y="403" font-family="Inter, sans-serif" font-size="9" fill="#991b1b" font-weight="bold" text-anchor="middle">REB</text>',
+            '  </g>',
+            '  <!-- Labeling text overlay -->',
+            '  <text x="200" y="445" font-family="Inter, sans-serif" font-size="12" font-weight="bold" fill="#334155" text-anchor="middle">Multi-Stage Distillation Column</text>',
+            '  <text x="200" y="460" font-family="Inter, sans-serif" font-size="10" fill="#64748b" text-anchor="middle">Hover over shell, condenser, reboiler, or trays to inspect sizing</text>',
+            '</svg>'
+        ])
+        
+        return "\n".join(svg)

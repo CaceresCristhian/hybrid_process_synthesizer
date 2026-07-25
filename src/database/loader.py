@@ -121,6 +121,62 @@ class ChemicalDatabaseLoader:
             )
         )
 
+    @staticmethod
+    def get_octane_metadata() -> ChemicalSpecies:
+        """Returns physical and chemical property metadata for Octane (C8H18)."""
+        return ChemicalSpecies(
+            id="octane",
+            name="Octane",
+            formula="C8H18",
+            micro=MicroScaleData(
+                molecular_weight=114.23,
+                electronegativities={"H": 2.20, "C": 2.55},
+                dipole_moment=0.0,
+                polarizability=15.6,
+                smiles="CCCCCCCC"
+            ),
+            macro=MacroScaleData(
+                boiling_point=398.8,
+                melting_point=216.4,
+                critical_temperature=568.7,
+                critical_pressure=2.49e6,
+                critical_volume=0.492,
+                acentric_factor=0.398,
+                cp_constants=[254.0, 0.0, 0.0, 0.0]
+            ),
+            system=SystemScaleData(
+                antoine_coefficients=[4.04867, 1355.126, -63.633]
+            )
+        )
+
+    @staticmethod
+    def get_phenol_metadata() -> ChemicalSpecies:
+        """Returns physical and chemical property metadata for Phenol (C6H5OH)."""
+        return ChemicalSpecies(
+            id="phenol",
+            name="Phenol",
+            formula="C6H6O",
+            micro=MicroScaleData(
+                molecular_weight=94.11,
+                electronegativities={"H": 2.20, "C": 2.55, "O": 3.44},
+                dipole_moment=1.22,
+                polarizability=11.1,
+                smiles="Oc1ccccc1"
+            ),
+            macro=MacroScaleData(
+                boiling_point=455.0,
+                melting_point=314.1,
+                critical_temperature=694.2,
+                critical_pressure=6.13e6,
+                critical_volume=0.268,
+                acentric_factor=0.444,
+                cp_constants=[124.0, 0.0, 0.0, 0.0]
+            ),
+            system=SystemScaleData(
+                antoine_coefficients=[4.11475, 1516.075, -98.985]
+            )
+        )
+
     @classmethod
     def load_binary_system(cls, system_type: str = "ethanol_water") -> dict:
         """Loads a standard validation binary system."""
