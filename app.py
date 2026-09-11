@@ -34,7 +34,8 @@ from src.visualization.interactive_canvas import InteractiveCanvasStudio
 from src.economics import (
     CostCorrelations, EquipmentCosting, CapitalCosting, 
     UtilityCosting, EconomicAnalyzer, DEFAULT_CEPCI, 
-    MATERIAL_FACTORS, DEFAULT_UTILITY_RATES
+    MATERIAL_FACTORS, DEFAULT_UTILITY_RATES,
+    LCAAnalyzer, REGIONAL_GRID_FACTORS, STEAM_FUEL_FACTORS, FEEDSTOCK_EMBODIED_FACTORS
 )
 from src.units.dynamic_column import DynamicDistillationColumn
 from src.control.auto_tuning import AutoTuner
@@ -70,6 +71,7 @@ import src.economics.capital_costing
 import src.economics.utility_costing
 import src.economics.profitability
 import src.economics.pinch_analysis
+import src.economics.lca_engine
 importlib.reload(src.database.loader)
 importlib.reload(src.visualization.svg_flowsheet)
 importlib.reload(src.visualization.pid_layout)
@@ -96,6 +98,7 @@ importlib.reload(src.economics.capital_costing)
 importlib.reload(src.economics.utility_costing)
 importlib.reload(src.economics.profitability)
 importlib.reload(src.economics.pinch_analysis)
+importlib.reload(src.economics.lca_engine)
 
 # Page Config
 st.set_page_config(
@@ -1303,14 +1306,15 @@ elif simulation_mode == "Interactive Flowsheet Designer":
     mapped_sp = {sp.id: sp for sp in [species_map[k] for k in st.session_state.fs_species]}
 
     # RENDER INTERACTIVE TABS
-    tab_pid, tab_mass, tab_energy, tab_vle, tab_econ, tab_dynamic, tab_pinch = st.tabs([
+    tab_pid, tab_mass, tab_energy, tab_vle, tab_econ, tab_dynamic, tab_pinch, tab_lca = st.tabs([
         "Flowsheet Canvas & P&ID", 
         "Mass Balance Summary", 
         "Energy Balance Summary", 
         "VLE & Reaction Kinetics Explorer",
         "Economics & Capital Costing (Turton/Guthrie)",
         "Dynamic Control & Real-Time Transients",
-        "Pinch Energy Integration & Heat Recovery"
+        "Pinch Energy Integration & Heat Recovery",
+        "Environmental LCA & Decarbonization Studio"
     ])
     
     with tab_pid:
@@ -2338,4 +2342,303 @@ elif simulation_mode == "Interactive Flowsheet Designer":
                     "Thermal Duty ΔH (kW)": f"{s.heat_duty_kW:.1f}"
                 })
             st.dataframe(streams_table_data, use_container_width=True)
+
+    with tab_lca:
+        st.write("### 🌿 Environmental Life Cycle Assessment (LCA) & Decarbonization Studio")
+        st.markdown(
+            "Cradle-to-gate greenhouse gas (GHG) accounting compliant with **ISO 14040/14044** and the **GHG Protocol**. "
+            "Evaluates direct process emissions (Scope 1), indirect power & steam utilities (Scope 2), "
+            "and raw material embodied carbon (Scope 3), with carbon pricing sensitivity ($/tonne $\\mathrm{CO_2}$) "
+            "and industrial electrification pathways (**MVR**, **Heat Pumps**, and **CCUS**)."
+        )
+
+        # 1. Configuration Toolbar
+        lca_c1, lca_c2, lca_c3, lca_c4 = st.columns([3, 2, 2, 2])
+        with lca_c1:
+            grid_choice = st.selectbox(
+                "Electrical Grid Carbon Intensity",
+                [
+                    "US Average Grid (0.386 kg CO2/kWh)",
+                    "EU-27 Average (0.230 kg CO2/kWh)",
+                    "California CAISO (0.210 kg CO2/kWh)",
+                    "Coal-Heavy Grid (0.820 kg CO2/kWh)",
+                    "Low-Carbon / Hydro / Nuclear (0.025 kg CO2/kWh)",
+                    "100% Green PPA / Zero-Carbon (0.000 kg CO2/kWh)"
+                ],
+                index=0,
+                help="Select the regional electricity grid emissions factor for Scope 2 calculations."
+            )
+            grid_key_map = {
+                "US Average Grid (0.386 kg CO2/kWh)": "US_Average",
+                "EU-27 Average (0.230 kg CO2/kWh)": "EU27_Average",
+                "California CAISO (0.210 kg CO2/kWh)": "California_CAISO",
+                "Coal-Heavy Grid (0.820 kg CO2/kWh)": "Coal_Heavy_Grid",
+                "Low-Carbon / Hydro / Nuclear (0.025 kg CO2/kWh)": "Low_Carbon_Nuclear_Hydro",
+                "100% Green PPA / Zero-Carbon (0.000 kg CO2/kWh)": "Green_PPA_100Pct_Renewable"
+            }
+            active_grid_region = grid_key_map[grid_choice]
+
+        with lca_c2:
+            steam_choice = st.selectbox(
+                "Process Steam Generation Mix",
+                [
+                    "Natural Gas Boiler (66.0 kg/GJ)",
+                    "Biomass Boiler (5.0 kg/GJ)",
+                    "Electric Boiler (Grid Dependent)",
+                    "Waste Heat Recovery (0.0 kg/GJ)"
+                ],
+                index=0,
+                help="Carbon intensity of utility steam delivered to reboilers and heaters."
+            )
+            steam_key_map = {
+                "Natural Gas Boiler (66.0 kg/GJ)": "natural_gas_boiler",
+                "Biomass Boiler (5.0 kg/GJ)": "biomass_boiler",
+                "Electric Boiler (Grid Dependent)": "electric_boiler",
+                "Waste Heat Recovery (0.0 kg/GJ)": "waste_heat_boiler"
+            }
+            active_steam_source = steam_key_map[steam_choice]
+
+        with lca_c3:
+            carbon_tax_rate = st.slider(
+                "Carbon Tax ($/tonne CO2)",
+                min_value=0.0, max_value=250.0, value=50.0, step=5.0,
+                help="Carbon emission penalty applied to taxable plant emissions."
+            )
+
+        with lca_c4:
+            tax_scope_policy = st.selectbox(
+                "Carbon Tax Policy Scope",
+                [
+                    "Scope 1 + Scope 2 (Standard)",
+                    "Scope 1 Only (Direct Compliance)",
+                    "All Scopes (Scope 1 + 2 + 3)"
+                ],
+                index=0,
+                help="Boundaries subject to carbon taxation."
+            )
+            policy_map = {
+                "Scope 1 + Scope 2 (Standard)": "Scope1_and_Scope2",
+                "Scope 1 Only (Direct Compliance)": "Scope1_only",
+                "All Scopes (Scope 1 + 2 + 3)": "All_Scopes"
+            }
+            active_policy = policy_map[tax_scope_policy]
+
+        # 2. Compile LCA
+        lca_compiled = FlowsheetSolver.compile_flowsheet_lca(
+            units_list=list(units_obj_map.values()),
+            streams_list=list(streams_obj_map.values()),
+            utility_opex_dict=export_econ["opex"],
+            profitability_dict=export_econ["profitability"],
+            species_map=mapped_sp,
+            grid_region=active_grid_region,
+            steam_source=active_steam_source,
+            carbon_tax_usd_per_tonne=carbon_tax_rate,
+            scope_policy=active_policy,
+            include_scope_3=True
+        )
+
+        s1 = lca_compiled["scope_1"]
+        s2 = lca_compiled["scope_2"]
+        s3 = lca_compiled["scope_3"]
+        ci = lca_compiled["carbon_intensity"]
+        tax_res = lca_compiled["carbon_tax_impact"]
+        pathways = lca_compiled["decarbonization_pathways"]
+
+        # 3. Top 5 KPI Metric Cards
+        st.write("##### 🎯 Greenhouse Gas Footprint & Regulatory Carbon Accounting")
+        k1, k2, k3, k4, k5 = st.columns(5)
+        k1.metric(
+            "Annual GHG Emissions",
+            f"{ci['total_cradle_to_gate_tonnes_yr']:,.1f} t CO2/yr",
+            f"Scope 1+2: {ci['total_ghg_emissions_tonnes_yr']:,.1f} t",
+            help="Total annual cradle-to-gate greenhouse gas emissions."
+        )
+        k2.metric(
+            "Product Carbon Intensity",
+            f"{ci['carbon_intensity_kg_co2_per_kg_product']:.3f} kg CO2/kg",
+            f"Primary: {ci['primary_product']}",
+            help="Normalized carbon footprint per kilogram of primary product output."
+        )
+        k3.metric(
+            "Emissions Scope Split",
+            f"S1: {ci['scope_1_pct']:.0f}% | S2: {ci['scope_2_pct']:.0f}%",
+            f"Scope 3: {ci['scope_3_pct']:.0f}%",
+            help="Contribution of Direct (Scope 1), Utilities (Scope 2), and Feedstocks (Scope 3)."
+        )
+        k4.metric(
+            "Annual Carbon Tax Liability",
+            f"${tax_res['annual_carbon_tax_usd']:,.0f} / yr",
+            f"@ ${carbon_tax_rate:.0f} / tonne",
+            delta_color="inverse",
+            help="Annual financial penalty assessed under selected carbon pricing policy."
+        )
+        mvr_data = pathways["mvr_electrification"]
+        k5.metric(
+            "MVR Decarbonization",
+            f"-{mvr_data['co2_abated_tonnes_yr']:,.1f} t CO2/yr",
+            f"MAC: ${mvr_data['marginal_abatement_cost_usd_per_tonne']:.1f}/t",
+            delta_color="normal",
+            help="CO2 abated by Mechanical Vapor Recompression and its Marginal Abatement Cost."
+        )
+
+        st.write("---")
+
+        # 4. Visual Charts
+        ch1, ch2 = st.columns(2)
+
+        with ch1:
+            # Chart 1: Emissions Breakdown Waterfall / Stacked
+            fig_lca = go.Figure()
+            cat_names = [
+                "Scope 1: Combustion",
+                "Scope 1: Reaction Vent",
+                "Scope 2: Power",
+                "Scope 2: Steam",
+                "Scope 3: Feedstock",
+                "Total Cradle-to-Gate"
+            ]
+            vals = [
+                s1["combustion_co2_kg_yr"] / 1000.0,
+                s1["reaction_vent_co2_kg_yr"] / 1000.0,
+                s2["electricity_co2_kg_yr"] / 1000.0,
+                s2["steam_co2_kg_yr"] / 1000.0,
+                s3["total_scope_3_tonnes_yr"],
+                ci["total_cradle_to_gate_tonnes_yr"]
+            ]
+            colors = ["#ef4444", "#dc2626", "#3b82f6", "#0284c7", "#8b5cf6", "#10b981"]
+            fig_lca.add_trace(go.Bar(
+                x=cat_names,
+                y=vals,
+                marker_color=colors,
+                text=[f"{v:,.1f} t" for v in vals],
+                textposition="auto"
+            ))
+            fig_lca.update_layout(
+                title="<b>GHG Inventory Breakdown by Emission Source (Tonnes CO2-eq/yr)</b>",
+                yaxis_title="Emissions (Tonnes CO2-eq/year)",
+                height=380,
+                margin=dict(l=20, r=20, t=40, b=20)
+            )
+            st.plotly_chart(fig_lca, use_container_width=True)
+
+        with ch2:
+            # Chart 2: Carbon Tax Sensitivity on Project NPV
+            fig_tax = go.Figure()
+            tax_sweep = list(range(0, 255, 25))
+            npv_base_sweep = []
+            npv_clean_sweep = []
+            disc_factor = (1.0 - (1.0 + 0.10) ** (-15)) / 0.10
+            base_npv_val = export_econ["profitability"]["net_present_value_NPV_usd"]
+            fossil_t = s1["total_scope_1_tonnes_yr"] + s2["total_scope_2_tonnes_yr"]
+            clean_t = mvr_data["post_retrofit_emissions_tonnes"]
+
+            for t_rate in tax_sweep:
+                tax_pen_base = (fossil_t * t_rate * 0.75) * disc_factor
+                npv_base_sweep.append(base_npv_val - tax_pen_base)
+                # Clean plant has initial extra MVR CAPEX but lower tax penalty
+                tax_pen_clean = (clean_t * t_rate * 0.75) * disc_factor
+                npv_clean_sweep.append(base_npv_val - mvr_data["capex_investment_usd"] - tax_pen_clean)
+
+            fig_tax.add_trace(go.Scatter(
+                x=tax_sweep, y=npv_base_sweep,
+                name="Fossil Baseline Plant",
+                line=dict(color="#ef4444", width=3)
+            ))
+            fig_tax.add_trace(go.Scatter(
+                x=tax_sweep, y=npv_clean_sweep,
+                name="Decarbonized (MVR Electrified)",
+                line=dict(color="#10b981", width=3, dash="dash")
+            ))
+            fig_tax.update_layout(
+                title="<b>Carbon Tax Sensitivity: 15-Year Project NPV vs Carbon Price ($/tonne)</b>",
+                xaxis_title="Carbon Tax Rate ($/tonne CO2)",
+                yaxis_title="15-Year Project NPV ($ USD)",
+                legend=dict(x=0.55, y=0.98, bgcolor="rgba(255,255,255,0.6)"),
+                height=380,
+                margin=dict(l=20, r=20, t=40, b=20)
+            )
+            st.plotly_chart(fig_tax, use_container_width=True)
+
+        # 5. Decarbonization Pathways Comparison
+        st.write("##### ⚡ Industrial Electrification & Decarbonization Pathways (MVR, Heat Pumps & CCUS)")
+        p_c1, p_c2, p_c3, p_c4 = st.columns(4)
+
+        base_p = pathways["baseline"]
+        mvr_p = pathways["mvr_electrification"]
+        hp_p = pathways["heat_pump_electrification"]
+        ccus_p = pathways["carbon_capture_ccus"]
+
+        with p_c1:
+            st.info(
+                f"**{base_p['name']}**\\n\\n"
+                f"- Annual GHG: `{base_p['annual_emissions_tonnes']:,.1f} t CO2`\\n"
+                f"- Utility OPEX: `${base_p['annual_utility_opex_usd']:,.0f}/yr`\\n"
+                f"- Retrofit CAPEX: `$0`\\n"
+                f"- Abatement Cost: `$0/t`"
+            )
+
+        with p_c2:
+            st.success(
+                f"**{mvr_p['name']}** (COP: {mvr_p['cop']:.1f})\\n\\n"
+                f"- CO2 Abated: `-{mvr_p['co2_abated_tonnes_yr']:,.1f} t/yr`\\n"
+                f"- Power Demand: `{mvr_p['power_demand_kW']:.1f} kW`\\n"
+                f"- Capital Cost: `${mvr_p['capex_investment_usd']:,.0f}`\\n"
+                f"- **Marginal Abatement Cost:** `${mvr_p['marginal_abatement_cost_usd_per_tonne']:.1f} / t CO2`"
+            )
+
+        with p_c3:
+            st.success(
+                f"**{hp_p['name']}** (COP: {hp_p['cop']:.1f})\\n\\n"
+                f"- CO2 Abated: `-{hp_p['co2_abated_tonnes_yr']:,.1f} t/yr`\\n"
+                f"- Power Demand: `{hp_p['power_demand_kW']:.1f} kW`\\n"
+                f"- Capital Cost: `${hp_p['capex_investment_usd']:,.0f}`\\n"
+                f"- **Marginal Abatement Cost:** `${hp_p['marginal_abatement_cost_usd_per_tonne']:.1f} / t CO2`"
+            )
+
+        with p_c4:
+            st.warning(
+                f"**{ccus_p['name']}** ({ccus_p['capture_rate_pct']:.0f}% Capture)\\n\\n"
+                f"- CO2 Captured: `-{ccus_p['co2_abated_tonnes_yr']:,.1f} t/yr`\\n"
+                f"- Capital Cost: `${ccus_p['capex_investment_usd']:,.0f}`\\n"
+                f"- Net Annual Cost: `${ccus_p['net_annual_cost_usd']:,.0f}/yr`\\n"
+                f"- **Marginal Abatement Cost:** `${ccus_p['marginal_abatement_cost_usd_per_tonne']:.1f} / t CO2`"
+            )
+
+        # 6. Life Cycle Inventory Schedule Table
+        st.write("##### 📋 ISO 14040 Life Cycle Inventory (LCI) Schedule")
+        lci_rows = []
+        for u_det in s1.get("unit_details", []):
+            lci_rows.append({
+                "Scope": "Scope 1 (Direct)",
+                "Equipment / Stream": u_det["unit_id"],
+                "Activity / Mechanism": f"{u_det['emission_type']} ({u_det['unit_type']})",
+                "Activity Rate": f"{u_det['duty_kW']:.1f} kW / {u_det['annual_gj']:.1f} GJ/yr" if u_det['duty_kW'] > 0 else "Continuous Vent",
+                "Annual Emissions (Tonnes CO2-eq)": f"{u_det['annual_co2_tonnes']:,.2f}"
+            })
+
+        lci_rows.append({
+            "Scope": "Scope 2 (Indirect)",
+            "Equipment / Stream": "Plant Power Incomers",
+            "Activity / Mechanism": f"Grid Electricity ({s2['grid_factor_kg_per_kwh']:.3f} kg/kWh)",
+            "Activity Rate": f"{export_econ['opex'].get('total_electricity_kW', 0.0):.1f} kW",
+            "Annual Emissions (Tonnes CO2-eq)": f"{s2['electricity_co2_kg_yr'] / 1000.0:,.2f}"
+        })
+        lci_rows.append({
+            "Scope": "Scope 2 (Indirect)",
+            "Equipment / Stream": "Utility Steam Boiler",
+            "Activity / Mechanism": f"Process Steam ({s2['steam_factor_kg_per_gj']:.1f} kg/GJ)",
+            "Activity Rate": f"{export_econ['opex'].get('total_heating_duty_kW', 0.0):.1f} kW",
+            "Annual Emissions (Tonnes CO2-eq)": f"{s2['steam_co2_kg_yr'] / 1000.0:,.2f}"
+        })
+
+        for fs in s3.get("feedstock_breakdown", []):
+            lci_rows.append({
+                "Scope": "Scope 3 (Upstream)",
+                "Equipment / Stream": f"Feed: {fs['stream_id']}",
+                "Activity / Mechanism": f"Embodied {fs['species_id']} ({fs['embodied_factor_kg_per_kg']:.2f} kg CO2/kg)",
+                "Activity Rate": f"{fs['annual_feed_mass_tonnes']:,.1f} tonnes/yr",
+                "Annual Emissions (Tonnes CO2-eq)": f"{fs['annual_co2_tonnes']:,.2f}"
+            })
+
+        st.dataframe(lci_rows, use_container_width=True)
 

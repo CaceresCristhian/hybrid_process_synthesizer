@@ -332,4 +332,49 @@ class FlowsheetSolver:
             "savings": savings
         }
 
+    @classmethod
+    def compile_flowsheet_lca(cls, units_list: list, streams_list: list,
+                              utility_opex_dict: Dict[str, Any],
+                              profitability_dict: Dict[str, Any],
+                              species_map: dict,
+                              grid_region: str = "US_Average",
+                              custom_grid_factor: Optional[float] = None,
+                              steam_source: str = "natural_gas_boiler",
+                              carbon_tax_usd_per_tonne: float = 50.0,
+                              scope_policy: str = "Scope1_and_Scope2",
+                              include_scope_3: bool = False,
+                              operating_hours: float = 8000.0) -> Dict[str, Any]:
+        """
+        Compiles full Environmental Life Cycle Assessment (LCA), Scope 1/2/3 emissions,
+        product carbon intensity, carbon tax sensitivity, and decarbonization pathways.
+        """
+        from src.economics.lca_engine import LCAAnalyzer
+
+        s1 = LCAAnalyzer.calculate_scope_1_emissions(units_list, streams_list, fuel_type=steam_source, operating_hours=operating_hours)
+        s2 = LCAAnalyzer.calculate_scope_2_emissions(utility_opex_dict, grid_region=grid_region, custom_grid_factor=custom_grid_factor, steam_source=steam_source)
+        s3 = LCAAnalyzer.calculate_scope_3_emissions(streams_list, species_map, operating_hours=operating_hours)
+
+        intensity = LCAAnalyzer.calculate_carbon_intensity(s1, s2, s3, streams_list, species_map, operating_hours=operating_hours, include_scope_3=include_scope_3)
+
+        lca_res = {
+            "scope_1": s1,
+            "scope_2": s2,
+            "scope_3": s3,
+            "carbon_intensity": intensity
+        }
+
+        tax_impact = LCAAnalyzer.calculate_carbon_tax_impact(lca_res, profitability_dict, carbon_tax_usd_per_tonne=carbon_tax_usd_per_tonne, scope_policy=scope_policy)
+
+        grid_f = custom_grid_factor if custom_grid_factor is not None else s2["grid_factor_kg_per_kwh"]
+        pathways = LCAAnalyzer.evaluate_decarbonization_pathways(units_list, utility_opex_dict, lca_res, grid_factor=grid_f, operating_hours=operating_hours)
+
+        return {
+            "scope_1": s1,
+            "scope_2": s2,
+            "scope_3": s3,
+            "carbon_intensity": intensity,
+            "carbon_tax_impact": tax_impact,
+            "decarbonization_pathways": pathways
+        }
+
 
