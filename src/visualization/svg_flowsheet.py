@@ -87,15 +87,94 @@ class SVGFlowsheet:
             
         elif eq_type == "Mixer":
             r = 20
-            # Circular body
             svg.append(f'<circle cx="{x+r}" cy="{y+r}" r="{r}" fill="#e0f2fe" stroke="#0ea5e9" stroke-width="2" />')
-            # Converging flow lines inside
             svg.append(f'<line x1="{x+5}" y1="{y+5}" x2="{x+r}" y2="{y+r}" stroke="#0ea5e9" stroke-width="1.5" />')
             svg.append(f'<line x1="{x+5}" y1="{y+r*2-5}" x2="{x+r}" y2="{y+r}" stroke="#0ea5e9" stroke-width="1.5" />')
             svg.append(f'<line x1="{x+r}" y1="{y+r}" x2="{x+r*2-5}" y2="{y+r}" stroke="#0ea5e9" stroke-width="2" />')
-            # Text label
             svg.append(f'<text x="{x+r}" y="{y+r+4}" font-family="Inter, sans-serif" font-size="10" font-weight="bold" fill="#0f172a" text-anchor="middle">{eq_id}</text>')
-            
+
+        elif eq_type in ["Heater", "Furnace", "Boiler"]:
+            w, h = 50, 50
+            # Cylindrical/rectangular body
+            svg.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="6" fill="#ffedd5" stroke="#ea580c" stroke-width="2" />')
+            # Internal heating coil
+            svg.append(f'<path d="M {x+8} {y+15} Q {x+25} {y+5} {x+42} {y+15} T {x+42} {y+35} T {x+8} {y+35}" fill="none" stroke="#ea580c" stroke-width="2" stroke-linecap="round"/>')
+            svg.append(f'<text x="{x + w/2}" y="{y + h/2 + 4}" font-family="Inter, sans-serif" font-size="9" font-weight="bold" fill="#7c2d12" text-anchor="middle">{eq_id}</text>')
+
+        elif eq_type in ["Cooler", "Condenser", "Chiller"]:
+            w, h = 50, 50
+            svg.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="6" fill="#e0f2fe" stroke="#0284c7" stroke-width="2" />')
+            # Cooling snowflake/cross icon
+            svg.append(f'<line x1="{x+12}" y1="{y+12}" x2="{x+38}" y2="{y+38}" stroke="#0284c7" stroke-width="2" stroke-dasharray="3 2" />')
+            svg.append(f'<line x1="{x+38}" y1="{y+12}" x2="{x+12}" y2="{y+38}" stroke="#0284c7" stroke-width="2" stroke-dasharray="3 2" />')
+            svg.append(f'<text x="{x + w/2}" y="{y + h/2 + 4}" font-family="Inter, sans-serif" font-size="9" font-weight="bold" fill="#0c4a6e" text-anchor="middle">{eq_id}</text>')
+
+        elif eq_type == "HeatExchanger":
+            r = 25
+            svg.append(f'<circle cx="{x+r}" cy="{y+r}" r="{r}" fill="#cffafe" stroke="#0891b2" stroke-width="2" />')
+            # Cross tube bundle lines
+            svg.append(f'<line x1="{x+5}" y1="{y+r}" x2="{x+r*2-5}" y2="{y+r}" stroke="#0891b2" stroke-width="2" />')
+            svg.append(f'<path d="M {x+10} {y+10} Q {x+r} {y+r+10} {x+r*2-10} {y+r*2-10}" fill="none" stroke="#0891b2" stroke-width="2"/>')
+            svg.append(f'<text x="{x+r}" y="{y+r-8}" font-family="Inter, sans-serif" font-size="9" font-weight="bold" fill="#164e63" text-anchor="middle">{eq_id}</text>')
+
+        elif eq_type in ["FlashDrum", "Separator", "KnockoutDrum"]:
+            w, h = 45, 90
+            svg.append(cls.draw_capsule(x, y, w, h, fill="#f8fafc", stroke="#475569", stroke_width=2))
+            # Demister pad
+            svg.append(f'<rect x="{x+4}" y="{y+20}" width="{w-8}" height="10" fill="#cbd5e1" stroke="#475569" stroke-width="1" stroke-dasharray="2 2" />')
+            # Liquid level
+            svg.append(f'<line x1="{x+4}" y1="{y+h-25}" x2="{x+w-4}" y2="{y+h-25}" stroke="#38bdf8" stroke-width="2" stroke-dasharray="3 2" />')
+            svg.append(f'<text x="{x + w/2}" y="{y + h/2 + 5}" font-family="Inter, sans-serif" font-size="9" font-weight="bold" fill="#1e293b" text-anchor="middle">{eq_id}</text>')
+
+        elif eq_type == "Splitter":
+            r = 18
+            svg.append(f'<polygon points="{x+r} {y}, {x+r*2} {y+r}, {x+r} {y+r*2}, {x} {y+r}" fill="#ede9fe" stroke="#7c3aed" stroke-width="2" />')
+            svg.append(f'<text x="{x+r}" y="{y+r+4}" font-family="Inter, sans-serif" font-size="9" font-weight="bold" fill="#4c1d95" text-anchor="middle">{eq_id}</text>')
+
+        elif eq_type == "Compressor":
+            w, h = 45, 45
+            # Tapered trapezoid (narrowing in flow direction for compression)
+            points = f"{x} {y}, {x+w} {y+10}, {x+w} {y+h-10}, {x} {y+h}"
+            svg.append(f'<polygon points="{points}" fill="#fef08a" stroke="#ca8a04" stroke-width="2" />')
+            svg.append(f'<text x="{x + w/2 - 2}" y="{y + h/2 + 4}" font-family="Inter, sans-serif" font-size="9" font-weight="bold" fill="#713f12" text-anchor="middle">{eq_id}</text>')
+
+        elif eq_type == "Expander":
+            w, h = 45, 45
+            # Inverted trapezoid (widening in flow direction)
+            points = f"{x} {y+10}, {x+w} {y}, {x+w} {y+h}, {x} {y+h-10}"
+            svg.append(f'<polygon points="{points}" fill="#dbeafe" stroke="#2563eb" stroke-width="2" />')
+            svg.append(f'<text x="{x + w/2 + 2}" y="{y + h/2 + 4}" font-family="Inter, sans-serif" font-size="9" font-weight="bold" fill="#1e3a8a" text-anchor="middle">{eq_id}</text>')
+
+        elif eq_type == "AbsorptionColumn":
+            w, h = 55, 130
+            svg.append(cls.draw_capsule(x, y, w, h, fill="#f1f5f9", stroke="#334155", stroke_width=2))
+            # Packing sections
+            svg.append(f'<rect x="{x+5}" y="{y+25}" width="{w-10}" height="75" fill="none" stroke="#334155" stroke-dasharray="3 3"/>')
+            svg.append(f'<line x1="{x+5}" y1="{y+25}" x2="{x+w-5}" y2="{y+100}" stroke="#334155" stroke-width="1"/>')
+            svg.append(f'<line x1="{x+5}" y1="{y+100}" x2="{x+w-5}" y2="{y+25}" stroke="#334155" stroke-width="1"/>')
+            svg.append(f'<text x="{x + w/2}" y="{y + h/2 + 5}" font-family="Inter, sans-serif" font-size="10" font-weight="bold" fill="#0f172a" text-anchor="middle">{eq_id}</text>')
+
+        elif eq_type in ["SolidLiquidSeparator", "Centrifuge", "Filter", "LauterTun"]:
+            w, h = 50, 60
+            points = f"{x} {y}, {x+w} {y}, {x+w*0.8} {y+h*0.7}, {x+w*0.5} {y+h}, {x+w*0.2} {y+h*0.7}"
+            svg.append(f'<polygon points="{points}" fill="#fef3c7" stroke="#d97706" stroke-width="2" />')
+            svg.append(f'<line x1="{x+8}" y1="{y+20}" x2="{x+w-8}" y2="{y+20}" stroke="#d97706" stroke-dasharray="2 2" stroke-width="1.5" />')
+            svg.append(f'<text x="{x + w/2}" y="{y + 15}" font-family="Inter, sans-serif" font-size="9" font-weight="bold" fill="#78350f" text-anchor="middle">{eq_id}</text>')
+
+        elif eq_type == "MembraneUnit":
+            w, h = 70, 40
+            svg.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="8" fill="#e0e7ff" stroke="#4338ca" stroke-width="2" />')
+            # Diagonal membrane separator
+            svg.append(f'<line x1="{x+10}" y1="{y+h-5}" x2="{x+w-10}" y2="{y+5}" stroke="#4338ca" stroke-dasharray="4 2" stroke-width="2" />')
+            svg.append(f'<text x="{x + w/2}" y="{y + h/2 + 4}" font-family="Inter, sans-serif" font-size="9" font-weight="bold" fill="#312e81" text-anchor="middle">{eq_id}</text>')
+
+        elif eq_type in ["CSTR", "Reactor", "IdealCSTR", "IdealPFR"]:
+            w, h = 60, 70
+            svg.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="10" fill="#fdf4ff" stroke="#c026d3" stroke-width="2" />')
+            svg.append(f'<line x1="{x+w/2}" y1="{y-5}" x2="{x+w/2}" y2="{y+h-15}" stroke="#c026d3" stroke-width="2" />')
+            svg.append(f'<line x1="{x+15}" y1="{y+h-20}" x2="{x+w-15}" y2="{y+h-20}" stroke="#c026d3" stroke-width="3" />')
+            svg.append(f'<text x="{x + w/2}" y="{y + h/2 - 5}" font-family="Inter, sans-serif" font-size="9" font-weight="bold" fill="#701a75" text-anchor="middle">{eq_id}</text>')
+
         else:  # Feed / Product Boundaries
             w, h = 100, 40
             svg.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="5" fill="#f8fafc" stroke="#64748b" stroke-width="1.5" stroke-dasharray="3 3" />')
@@ -111,9 +190,9 @@ class SVGFlowsheet:
                                units_states: dict = None,
                                species_map: dict = None) -> str:
         """
-        Generates compiled SVG code representing the whole Flowshet diagram.
-        Separates boundary feeds and products and groups them in labeled boxes.
-        Includes hover tooltips for all elements.
+        Generates compiled SVG code representing the whole Flowsheet diagram.
+        Separates boundary feeds and products, groups them in labeled boxes,
+        and uses dynamic topological layered graph layout for arbitrary plants.
         """
         if variations_dict is None:
             variations_dict = {}
@@ -132,7 +211,7 @@ class SVGFlowsheet:
         for c in connections_list:
             src = c["from"]
             dst = c["to"]
-            s_id = conn_s_id = c["stream"]
+            conn_s_id = c["stream"]
             
             # Separate Feed Boundaries
             if src == "Feed Boundary":
@@ -153,59 +232,62 @@ class SVGFlowsheet:
                 "to": dst_id,
                 "stream": conn_s_id
             })
-            
-        # Classify equipment types
-        pumps = []
-        valves = []
-        mixers = []
-        reactors = []
-        columns = []
-        
-        for n, udata in units_dict.items():
-            utype = udata["type"]
-            if utype == "Pump":
-                pumps.append(n)
-            elif utype == "ControlValve":
-                valves.append(n)
-            elif utype == "Mixer":
-                mixers.append(n)
-            elif utype == "Bioreactor":
-                reactors.append(n)
-            elif utype == "DistillationColumn":
-                columns.append(n)
 
-        # 2. Coordinates mapping (left-to-right columns)
+        # 2. Dynamic Topological Rank (Layered Graph Layout)
+        node_rank = {f: 0 for f in feed_nodes}
+        adj = {}
+        for conn in mapped_connections:
+            u = conn["from"]
+            v = conn["to"]
+            adj.setdefault(u, []).append(v)
+            
+        # Relax ranks along edges
+        changed = True
+        passes = 0
+        while changed and passes < 25:
+            changed = False
+            passes += 1
+            for u in list(node_rank.keys()):
+                curr_r = node_rank[u]
+                for v in adj.get(u, []):
+                    if v not in product_nodes:
+                        if v not in node_rank or node_rank[v] < curr_r + 1:
+                            node_rank[v] = curr_r + 1
+                            changed = True
+
+        for u in units_dict.keys():
+            if u not in node_rank:
+                node_rank[u] = 1
+                
+        max_unit_rank = max([r for n, r in node_rank.items() if n not in product_nodes], default=1)
+        for p in product_nodes:
+            node_rank[p] = max_unit_rank + 1
+            
+        # Group nodes by rank
+        rank_groups = {}
+        for n, r in node_rank.items():
+            rank_groups.setdefault(r, []).append(n)
+            
+        # Compute dynamic coordinates
         node_coords = {}
+        max_rank = max(node_rank.values(), default=1)
         
-        # Column 1: Feeds (x = 80)
-        for idx, f in enumerate(sorted(list(feed_nodes))):
-            node_coords[f] = (80, 150 + idx * 100)
-            
-        # Column 2: Pumps (x = 240)
-        for idx, p in enumerate(pumps):
-            node_coords[p] = (240, 150 + idx * 100)
-            
-        # Column 3: Valves (x = 360)
-        for idx, v in enumerate(valves):
-            node_coords[v] = (360, 145 + idx * 100)
-            
-        # Column 4: Mixers (x = 460)
-        for idx, m in enumerate(mixers):
-            node_coords[m] = (460, 145 + idx * 100)
-            
-        # Column 5: Reactors & Columns (x = 600)
-        for idx, r in enumerate(reactors):
-            node_coords[r] = (600, 150 + idx * 150)
-        for idx, c in enumerate(columns):
-            node_coords[c] = (600, 120 + idx * 200)
-            
-        # Column 6: Products (x = 800)
-        for idx, pr in enumerate(sorted(list(product_nodes))):
-            node_coords[pr] = (800, 120 + idx * 120)
-
-        # SVG Dimensions
-        svg_w = 980
-        svg_h = 550
+        dx = 175
+        x_start = 70
+        y_start = 140
+        dy = 130
+        
+        max_group_len = 1
+        for r, nodes in rank_groups.items():
+            nodes.sort()
+            max_group_len = max(max_group_len, len(nodes))
+            for idx, n in enumerate(nodes):
+                x = x_start + r * dx
+                y = y_start + idx * dy
+                node_coords[n] = (x, y)
+                
+        svg_w = max(980, x_start + (max_rank + 1) * dx + 120)
+        svg_h = max(560, y_start + max_group_len * dy + 100)
         
         # Compile SVG markup
         svg = [
@@ -224,14 +306,16 @@ class SVGFlowsheet:
 
         # 3. Draw Demarcated Bounding Boxes (subgraph boxes)
         if feed_nodes:
+            min_x_f = min(node_coords[f][0] for f in feed_nodes) - 30
             max_y = max(node_coords[f][1] for f in feed_nodes) + 60
-            svg.append(f'  <rect x="50" y="80" width="160" height="{max_y - 60}" rx="8" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 4" />')
-            svg.append('  <text x="130" y="72" font-family="Inter, sans-serif" font-size="11" font-weight="bold" fill="#64748b" text-anchor="middle">Feed Boundaries</text>')
+            svg.append(f'  <rect x="{min_x_f}" y="80" width="160" height="{max_y - 60}" rx="8" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 4" />')
+            svg.append(f'  <text x="{min_x_f + 80}" y="72" font-family="Inter, sans-serif" font-size="11" font-weight="bold" fill="#64748b" text-anchor="middle">Feed Boundaries</text>')
             
         if product_nodes:
+            min_x_p = min(node_coords[pr][0] for pr in product_nodes) - 30
             max_y = max(node_coords[pr][1] for pr in product_nodes) + 60
-            svg.append(f'  <rect x="770" y="60" width="160" height="{max_y - 20}" rx="8" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 4" />')
-            svg.append('  <text x="850" y="52" font-family="Inter, sans-serif" font-size="11" font-weight="bold" fill="#64748b" text-anchor="middle">Product Boundaries</text>')
+            svg.append(f'  <rect x="{min_x_p}" y="60" width="160" height="{max_y - 20}" rx="8" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 4" />')
+            svg.append(f'  <text x="{min_x_p + 80}" y="52" font-family="Inter, sans-serif" font-size="11" font-weight="bold" fill="#64748b" text-anchor="middle">Product Boundaries</text>')
 
         # 4. Draw Connection Streams (Lines with hover tooltips)
         for conn in mapped_connections:

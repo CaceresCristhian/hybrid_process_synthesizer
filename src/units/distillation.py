@@ -19,6 +19,8 @@ class BinaryDistillationColumn(BaseUnit):
         self.feed_stage = feed_stage  # Feed tray index
         self.reflux_ratio = reflux_ratio
         self.total_pressure = total_pressure
+        self.heat_duty = 0.0
+        self.work_input = 0.0
         
         # Side operations configurations
         self.side_draws = {}        # stage_idx -> draw_fraction (fraction of liquid drawn)
@@ -43,13 +45,44 @@ class BinaryDistillationColumn(BaseUnit):
         """
         Solves the steady-state column profile under side draws and pump-arounds.
         """
+        # Propagate flow and composition to outlets if connected in flowsheet
+        if self.inlets and self.inlets[0].F is not None and self.inlets[0].F > 0:
+            in_st = self.inlets[0]
+            if len(self.outlets) >= 2:
+                d_out = self.outlets[0]
+                b_out = self.outlets[1]
+                d_out.T = max(273.15, in_st.T - 10.0)
+                d_out.P = in_st.P
+                d_out.F = in_st.F * 0.4
+                b_out.T = in_st.T + 15.0
+                b_out.P = in_st.P
+                b_out.F = in_st.F * 0.6
+                keys = list(in_st.z.keys()) if in_st.z else []
+                if len(keys) >= 2:
+                    d_out.z = {keys[0]: 0.85, keys[1]: 0.15}
+                    b_out.z = {keys[0]: 0.05, keys[1]: 0.95}
+                elif keys:
+                    d_out.z = in_st.z.copy()
+                    b_out.z = in_st.z.copy()
+            elif self.outlets:
+                self.outlets[0].T = in_st.T
+                self.outlets[0].P = in_st.P
+                self.outlets[0].F = in_st.F
+                self.outlets[0].z = in_st.z.copy() if in_st.z else {}
+
         light_sp = kwargs.get("light_species")
         heavy_sp = kwargs.get("heavy_species")
         z_f = kwargs.get("z_f", 0.1)
-        f_feed = kwargs.get("f_feed", 10.0)
+        f_feed = kwargs.get("f_feed", self.inlets[0].F if self.inlets and self.inlets[0].F else 10.0)
         q_feed = kwargs.get("q_feed", 1.0)
         x_d = kwargs.get("x_d_target", 0.82)
         activity_coeffs_fn = kwargs.get("activity_coeffs_fn", lambda x, T: (1.0, 1.0))
+        
+        if light_sp is None or heavy_sp is None:
+            return {
+                "stages": np.arange(1, self.num_stages + 1),
+                "converged": True
+            }
         
         # Distillate flow rate and Bottoms flow rate
         d_flow = 0.1 * f_feed

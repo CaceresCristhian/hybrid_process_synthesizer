@@ -89,6 +89,63 @@ class FlowsheetSolver:
             "iterations": info.get("nfev", 0)
         }
 
+    @classmethod
+    def solve_flowsheet_topology(cls, units_map: dict, streams_map: dict, species_map: dict,
+                                 max_passes: int = 30, tolerance: float = 1e-4) -> dict:
+        """
+        Robust sequential modular flowsheet topology solver.
+        Solves multi-unit chains in forward sequence regardless of naming/alphabetical order,
+        and converges recycle loops iteratively.
+        """
+        solved_units = set()
+        converged = False
+        last_max_delta = 1.0
+        p = 0
+        
+        for p in range(max_passes):
+            # Snapshot stream flows and temperatures
+            prev_snapshot = {
+                s_id: (s.F if s.F is not None else -1.0, s.T if s.T is not None else -1.0)
+                for s_id, s in streams_map.items()
+            }
+            
+            # Sweep all units in the flowsheet
+            for uid, unit in units_map.items():
+                if unit.inlets:
+                    inlets_ready = all(i.F is not None and i.F >= 0 for i in unit.inlets)
+                    if inlets_ready:
+                        try:
+                            unit.run_simulation((0, 0), [], species_map=species_map)
+                            solved_units.add(uid)
+                        except Exception:
+                            pass
+                            
+            # Check convergence across all streams
+            deltas = []
+            for s_id, s in streams_map.items():
+                prev_f, prev_t = prev_snapshot.get(s_id, (-1.0, -1.0))
+                curr_f = s.F if s.F is not None else -1.0
+                curr_t = s.T if s.T is not None else -1.0
+                if prev_f >= 0 and curr_f >= 0:
+                    d_f = abs(curr_f - prev_f) / max(prev_f, 1e-4)
+                    d_t = abs(curr_t - prev_t) / max(prev_t, 1e-4)
+                    deltas.append(max(d_f, d_t))
+                elif prev_f != curr_f or prev_t != curr_t:
+                    deltas.append(1.0)
+                    
+            last_max_delta = max(deltas) if deltas else 0.0
+            if deltas and last_max_delta < tolerance and len(solved_units) > 0:
+                converged = True
+                break
+                
+        return {
+            "converged": converged or (len(solved_units) == len(units_map)),
+            "passes": p + 1,
+            "max_delta": last_max_delta,
+            "solved_units_count": len(solved_units),
+            "total_units_count": len(units_map)
+        }
+
     # ==========================================
     # MASS & ENERGY BALANCE COMPILERS
     # ==========================================

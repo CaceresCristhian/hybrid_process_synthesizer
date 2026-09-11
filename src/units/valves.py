@@ -14,6 +14,8 @@ class ControlValve(BaseUnit):
         self.open_fraction = 1.0  # 100% open by default
         self.sg = 1.0            # Specific gravity (water = 1.0)
         self.delta_p = 0.0
+        self.heat_duty = 0.0
+        self.work_input = 0.0
 
     def calculate_flow(self, p_in: float, p_out: float) -> float:
         """Calculates flow rate through the valve based on pressure difference (in mol/s)."""
@@ -27,8 +29,17 @@ class ControlValve(BaseUnit):
         return flow
 
     def run_simulation(self, time_span: tuple, initial_state: list, **kwargs) -> dict:
-        """Solves transient valve behavior."""
-        p_in = kwargs.get("p_in", 101325.0)
+        """Solves valve behavior in dynamic or flowsheet mode."""
+        if self.inlets and self.inlets[0].F is not None and self.inlets[0].F > 0:
+            in_st = self.inlets[0]
+            if self.outlets:
+                out_st = self.outlets[0]
+                out_st.T = in_st.T
+                out_st.P = max(101325.0, in_st.P - 20000.0)
+                out_st.F = in_st.F
+                out_st.z = in_st.z.copy() if in_st.z else {}
+
+        p_in = kwargs.get("p_in", self.inlets[0].P if self.inlets and self.inlets[0].P else 101325.0)
         p_out = kwargs.get("p_out", 101325.0)
         self.open_fraction = kwargs.get("open_fraction", self.open_fraction)
         

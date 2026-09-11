@@ -19,8 +19,14 @@ from src.units.stream import MaterialStream
 from src.units.bioreactor import JacketedBioreactor
 from src.units.distillation import BinaryDistillationColumn
 from src.units.valves import ControlValve
+from src.units.pump import FlowsheetPump
 from src.visualization.pid_layout import PIDLayout
 from src.units.mixer import FlowsheetMixer
+from src.units.thermal import Heater, Cooler, HeatExchanger
+from src.units.separators import FlashDrum, Splitter, SolidLiquidSeparator, MembraneUnit
+from src.units.compressor import Compressor, Expander
+from src.units.columns import AbsorptionColumn
+from src.units.reactors import IdealCSTR, IdealPFR
 
 # Force Streamlit to reload modified submodules to prevent caching errors on Streamlit Cloud
 import importlib
@@ -28,41 +34,24 @@ import src.database.loader
 import src.visualization.svg_flowsheet
 import src.visualization.pid_layout
 import src.units.mixer
+import src.units.thermal
+import src.units.separators
+import src.units.compressor
+import src.units.columns
+import src.units.reactors
+import src.units.pump
+import src.control.flowsheet_solver
 importlib.reload(src.database.loader)
 importlib.reload(src.visualization.svg_flowsheet)
 importlib.reload(src.visualization.pid_layout)
 importlib.reload(src.units.mixer)
-
-# Define a custom inline Pump unit class for Flowsheet Designer
-class FlowsheetPump(BaseUnit):
-    def __init__(self, unit_id: str, name: str, p_boost: float = 150000.0, efficiency: float = 0.75):
-        super().__init__(unit_id, name)
-        self.p_boost = p_boost
-        self.efficiency = efficiency
-        self.work_input = 0.0
-        self.heat_duty = 0.0
-        
-    def run_simulation(self, time_span: tuple, initial_state: list, **kwargs) -> dict:
-        in_stream = self.inlets[0] if self.inlets else None
-        out_stream = self.outlets[0] if self.outlets else None
-        
-        if in_stream and out_stream:
-            # Propagate values
-            out_stream.T = in_stream.T + 0.4  # pump heat compression
-            out_stream.P = in_stream.P + self.p_boost
-            out_stream.F = in_stream.F
-            out_stream.z = in_stream.z.copy()
-            
-            # Work input = volumetric flow * dP / efficiency
-            # (molar flow * MW / density) * dP / efficiency
-            mw = in_stream.get_mixture_mw(kwargs.get("species_map", {}))
-            vol_flow = (in_stream.F * mw * 1e-3 / 1000.0)  # m3/s approx
-            self.work_input = (vol_flow * self.p_boost) / self.efficiency
-        return {"work_input_W": self.work_input}
-        
-    def size_equipment(self) -> dict:
-        self.sizing_results = {"hydraulic_power_W": getattr(self, "work_input", 0.0)}
-        return self.sizing_results
+importlib.reload(src.units.thermal)
+importlib.reload(src.units.separators)
+importlib.reload(src.units.compressor)
+importlib.reload(src.units.columns)
+importlib.reload(src.units.reactors)
+importlib.reload(src.units.pump)
+importlib.reload(src.control.flowsheet_solver)
 
 # Page Config
 st.set_page_config(
@@ -154,6 +143,20 @@ butane_sp = ChemicalDatabaseLoader.get_butane_metadata()
 benzene_sp = ChemicalDatabaseLoader.get_benzene_metadata()
 toluene_sp = ChemicalDatabaseLoader.get_toluene_metadata()
 
+# Additional multi-industry species
+hydrogen_sp = ChemicalDatabaseLoader.get_hydrogen_metadata()
+co2_sp = ChemicalDatabaseLoader.get_co2_metadata()
+nitrogen_sp = ChemicalDatabaseLoader.get_nitrogen_metadata()
+ammonia_sp = ChemicalDatabaseLoader.get_ammonia_metadata()
+pentane_sp = ChemicalDatabaseLoader.get_pentane_metadata()
+hexane_sp = ChemicalDatabaseLoader.get_hexane_metadata()
+decane_sp = ChemicalDatabaseLoader.get_decane_metadata()
+pxylene_sp = ChemicalDatabaseLoader.get_pxylene_metadata()
+glucose_sp = ChemicalDatabaseLoader.get_glucose_metadata()
+acetic_acid_sp = ChemicalDatabaseLoader.get_acetic_acid_metadata()
+glycerol_sp = ChemicalDatabaseLoader.get_glycerol_metadata()
+nacl_sp = ChemicalDatabaseLoader.get_nacl_metadata()
+
 species_map = {
     "Ethanol": ethanol_sp,
     "Water": water_sp,
@@ -166,7 +169,19 @@ species_map = {
     "Propane": propane_sp,
     "Butane": butane_sp,
     "Benzene": benzene_sp,
-    "Toluene": toluene_sp
+    "Toluene": toluene_sp,
+    "Hydrogen": hydrogen_sp,
+    "CO2": co2_sp,
+    "Nitrogen": nitrogen_sp,
+    "Ammonia": ammonia_sp,
+    "Pentane": pentane_sp,
+    "Hexane": hexane_sp,
+    "Decane": decane_sp,
+    "p-Xylene": pxylene_sp,
+    "Glucose": glucose_sp,
+    "Acetic Acid": acetic_acid_sp,
+    "Glycerol": glycerol_sp,
+    "Sodium Chloride": nacl_sp
 }
 species_map_id = {
     "ethanol": ethanol_sp,
@@ -180,7 +195,19 @@ species_map_id = {
     "propane": propane_sp,
     "butane": butane_sp,
     "benzene": benzene_sp,
-    "toluene": toluene_sp
+    "toluene": toluene_sp,
+    "hydrogen": hydrogen_sp,
+    "co2": co2_sp,
+    "nitrogen": nitrogen_sp,
+    "ammonia": ammonia_sp,
+    "pentane": pentane_sp,
+    "hexane": hexane_sp,
+    "decane": decane_sp,
+    "pxylene": pxylene_sp,
+    "glucose": glucose_sp,
+    "acetic_acid": acetic_acid_sp,
+    "glycerol": glycerol_sp,
+    "nacl": nacl_sp
 }
 
 # Sidebar Selection
@@ -663,6 +690,183 @@ elif simulation_mode == "Interactive Flowsheet Designer":
     # ==========================================
     # SIDEBAR: FLOWSHEET BUILDER CONTROLLERS
     # ==========================================
+    
+    # 0. PLANT ARCHITECTURE PRESETS
+    st.sidebar.subheader("0. Plant Architecture Presets")
+    selected_preset = st.sidebar.selectbox(
+        "Load Plant Preset",
+        [
+            "Select or Customize Scratch Canvas...",
+            "Crude Oil Refinery (Atmospheric & Hydrotreater)",
+            "Craft Beer Brewery & Fermentation Facility",
+            "Green Ammonia Synthesis Plant (Haber-Bosch Loop)",
+            "Carbon Capture & Acid Gas Sweetening Facility",
+            "Bio-Ethanol Fermentation & Distillation Plant",
+            "Seawater Desalination Plant (RO Membrane & Minerals)"
+        ]
+    )
+    if st.sidebar.button("⚡ Load Plant Preset"):
+        if selected_preset == "Crude Oil Refinery (Atmospheric & Hydrotreater)":
+            st.session_state.fs_species = ["Pentane", "Hexane", "Octane", "Decane", "Hydrogen"]
+            st.session_state.fs_fluid_pkg = "Peng-Robinson EOS"
+            st.session_state.fs_units = {
+                "P-101": {"type": "Pump", "thermo": "Peng-Robinson EOS", "p_boost": 250000.0, "variation": ""},
+                "E-101": {"type": "Heater", "thermo": "Peng-Robinson EOS", "t_target": 610.0, "variation": ""},
+                "C-101": {"type": "DistillationColumn", "thermo": "Peng-Robinson EOS", "variation": "Sieve Tray Column"},
+                "M-101": {"type": "Mixer", "thermo": "Peng-Robinson EOS", "variation": ""},
+                "R-101": {"type": "CSTR", "thermo": "Peng-Robinson EOS", "volume": 5.0, "variation": ""},
+                "F-101": {"type": "FlashDrum", "thermo": "Peng-Robinson EOS", "variation": ""}
+            }
+            st.session_state.fs_connections = [
+                {"from": "Feed Boundary", "to": "P-101", "stream": "S-101"},
+                {"from": "P-101", "to": "E-101", "stream": "S-102"},
+                {"from": "E-101", "to": "C-101", "stream": "S-103"},
+                {"from": "C-101", "to": "Product Boundary", "stream": "S-104"},
+                {"from": "C-101", "to": "M-101", "stream": "S-105"},
+                {"from": "Feed Boundary", "to": "M-101", "stream": "S-106"},
+                {"from": "M-101", "to": "R-101", "stream": "S-107"},
+                {"from": "R-101", "to": "F-101", "stream": "S-108"},
+                {"from": "F-101", "to": "Product Boundary", "stream": "S-109"},
+                {"from": "F-101", "to": "Product Boundary", "stream": "S-110"}
+            ]
+            st.session_state.fs_boundaries = {
+                "S-101": {"T": 298.15, "P": 101325.0, "F": 25.0, "z": {"pentane": 0.25, "hexane": 0.25, "octane": 0.25, "decane": 0.25}},
+                "S-106": {"T": 320.0, "P": 300000.0, "F": 10.0, "z": {"hydrogen": 1.0}}
+            }
+            st.rerun()
+
+        elif selected_preset == "Craft Beer Brewery & Fermentation Facility":
+            st.session_state.fs_species = ["Water", "Glucose", "Ethanol", "CO2", "Acetic Acid"]
+            st.session_state.fs_fluid_pkg = "Ideal Gas / Activity model"
+            st.session_state.fs_units = {
+                "M-101": {"type": "Mixer", "thermo": "Ideal Gas / Activity model", "variation": ""},
+                "H-101": {"type": "Heater", "thermo": "Ideal Gas / Activity model", "t_target": 372.0, "variation": ""},
+                "S-101": {"type": "SolidLiquidSeparator", "thermo": "Ideal Gas / Activity model", "variation": ""},
+                "E-101": {"type": "Cooler", "thermo": "Ideal Gas / Activity model", "t_target": 293.0, "variation": ""},
+                "R-101": {"type": "Bioreactor", "thermo": "Ideal Gas / Activity model", "volume": 10.0, "variation": ""},
+                "F-101": {"type": "SolidLiquidSeparator", "thermo": "Ideal Gas / Activity model", "variation": ""}
+            }
+            st.session_state.fs_connections = [
+                {"from": "Feed Boundary", "to": "M-101", "stream": "S-101"},
+                {"from": "Feed Boundary", "to": "M-101", "stream": "S-102"},
+                {"from": "M-101", "to": "H-101", "stream": "S-103"},
+                {"from": "H-101", "to": "S-101", "stream": "S-104"},
+                {"from": "S-101", "to": "Product Boundary", "stream": "S-105"},
+                {"from": "S-101", "to": "E-101", "stream": "S-106"},
+                {"from": "E-101", "to": "R-101", "stream": "S-107"},
+                {"from": "R-101", "to": "F-101", "stream": "S-108"},
+                {"from": "F-101", "to": "Product Boundary", "stream": "S-109"},
+                {"from": "F-101", "to": "Product Boundary", "stream": "S-110"}
+            ]
+            st.session_state.fs_boundaries = {
+                "S-101": {"T": 295.0, "P": 101325.0, "F": 35.0, "z": {"water": 1.0}},
+                "S-102": {"T": 295.0, "P": 101325.0, "F": 12.0, "z": {"glucose": 0.85, "water": 0.15}}
+            }
+            st.rerun()
+
+        elif selected_preset == "Green Ammonia Synthesis Plant (Haber-Bosch Loop)":
+            st.session_state.fs_species = ["Hydrogen", "Nitrogen", "Ammonia", "Methane"]
+            st.session_state.fs_fluid_pkg = "Peng-Robinson EOS"
+            st.session_state.fs_units = {
+                "M-101": {"type": "Mixer", "thermo": "Peng-Robinson EOS", "variation": ""},
+                "K-101": {"type": "Compressor", "thermo": "Peng-Robinson EOS", "variation": ""},
+                "E-101": {"type": "Heater", "thermo": "Peng-Robinson EOS", "t_target": 670.0, "variation": ""},
+                "R-101": {"type": "CSTR", "thermo": "Peng-Robinson EOS", "volume": 8.0, "variation": ""},
+                "E-102": {"type": "Cooler", "thermo": "Peng-Robinson EOS", "t_target": 245.0, "variation": ""},
+                "V-101": {"type": "FlashDrum", "thermo": "Peng-Robinson EOS", "variation": ""},
+                "SP-101": {"type": "Splitter", "thermo": "Peng-Robinson EOS", "variation": ""}
+            }
+            st.session_state.fs_connections = [
+                {"from": "Feed Boundary", "to": "M-101", "stream": "S-101"},
+                {"from": "M-101", "to": "K-101", "stream": "S-102"},
+                {"from": "K-101", "to": "E-101", "stream": "S-103"},
+                {"from": "E-101", "to": "R-101", "stream": "S-104"},
+                {"from": "R-101", "to": "E-102", "stream": "S-105"},
+                {"from": "E-102", "to": "V-101", "stream": "S-106"},
+                {"from": "V-101", "to": "Product Boundary", "stream": "S-107"},
+                {"from": "V-101", "to": "SP-101", "stream": "S-108"},
+                {"from": "SP-101", "to": "Product Boundary", "stream": "S-109"},
+                {"from": "SP-101", "to": "Product Boundary", "stream": "S-110"}
+            ]
+            st.session_state.fs_boundaries = {
+                "S-101": {"T": 300.0, "P": 2500000.0, "F": 40.0, "z": {"hydrogen": 0.74, "nitrogen": 0.25, "methane": 0.01}}
+            }
+            st.rerun()
+
+        elif selected_preset == "Carbon Capture & Acid Gas Sweetening Facility":
+            st.session_state.fs_species = ["CO2", "Nitrogen", "Water", "Methane"]
+            st.session_state.fs_fluid_pkg = "Ideal Gas / Activity model"
+            st.session_state.fs_units = {
+                "C-101": {"type": "AbsorptionColumn", "thermo": "Ideal Gas / Activity model", "variation": ""},
+                "P-101": {"type": "Pump", "thermo": "Ideal Gas / Activity model", "p_boost": 200000.0, "variation": ""},
+                "HEX-101": {"type": "HeatExchanger", "thermo": "Ideal Gas / Activity model", "variation": ""},
+                "H-101": {"type": "Heater", "thermo": "Ideal Gas / Activity model", "t_target": 393.0, "variation": ""},
+                "F-101": {"type": "FlashDrum", "thermo": "Ideal Gas / Activity model", "variation": ""}
+            }
+            st.session_state.fs_connections = [
+                {"from": "Feed Boundary", "to": "C-101", "stream": "S-101"},
+                {"from": "Feed Boundary", "to": "C-101", "stream": "S-102"},
+                {"from": "C-101", "to": "Product Boundary", "stream": "S-103"},
+                {"from": "C-101", "to": "P-101", "stream": "S-104"},
+                {"from": "P-101", "to": "HEX-101", "stream": "S-105"},
+                {"from": "HEX-101", "to": "H-101", "stream": "S-106"},
+                {"from": "H-101", "to": "F-101", "stream": "S-107"},
+                {"from": "F-101", "to": "Product Boundary", "stream": "S-108"},
+                {"from": "F-101", "to": "Product Boundary", "stream": "S-109"}
+            ]
+            st.session_state.fs_boundaries = {
+                "S-101": {"T": 320.0, "P": 105000.0, "F": 30.0, "z": {"co2": 0.15, "nitrogen": 0.85}},
+                "S-102": {"T": 310.0, "P": 110000.0, "F": 25.0, "z": {"water": 0.95, "co2": 0.05}}
+            }
+            st.rerun()
+
+        elif selected_preset == "Seawater Desalination Plant (RO Membrane & Minerals)":
+            st.session_state.fs_species = ["Water", "Sodium Chloride"]
+            st.session_state.fs_fluid_pkg = "e-NRTL Electrolytes"
+            st.session_state.fs_units = {
+                "P-101": {"type": "Pump", "thermo": "e-NRTL Electrolytes", "p_boost": 5500000.0, "variation": ""},
+                "M-101": {"type": "MembraneUnit", "thermo": "e-NRTL Electrolytes", "variation": ""},
+                "V-101": {"type": "ControlValve", "thermo": "e-NRTL Electrolytes", "opening": 0.8, "variation": ""},
+                "MIX-101": {"type": "Mixer", "thermo": "e-NRTL Electrolytes", "variation": ""}
+            }
+            st.session_state.fs_connections = [
+                {"from": "Feed Boundary", "to": "P-101", "stream": "S-101"},
+                {"from": "P-101", "to": "M-101", "stream": "S-102"},
+                {"from": "M-101", "to": "MIX-101", "stream": "S-103"},
+                {"from": "M-101", "to": "V-101", "stream": "S-104"},
+                {"from": "V-101", "to": "Product Boundary", "stream": "S-105"},
+                {"from": "Feed Boundary", "to": "MIX-101", "stream": "S-106"},
+                {"from": "MIX-101", "to": "Product Boundary", "stream": "S-107"}
+            ]
+            st.session_state.fs_boundaries = {
+                "S-101": {"T": 293.15, "P": 101325.0, "F": 50.0, "z": {"water": 0.965, "nacl": 0.035}},
+                "S-106": {"T": 293.15, "P": 101325.0, "F": 1.0, "z": {"water": 0.99, "nacl": 0.01}}
+            }
+            st.rerun()
+
+        elif selected_preset == "Bio-Ethanol Fermentation & Distillation Plant":
+            st.session_state.fs_species = ["Ethanol", "Water", "Glucose", "CO2"]
+            st.session_state.fs_fluid_pkg = "Ideal Gas / Activity model"
+            st.session_state.fs_units = {
+                "R-101": {"type": "Bioreactor", "thermo": "Ideal Gas / Activity model", "volume": 15.0, "variation": ""},
+                "P-101": {"type": "Pump", "thermo": "Ideal Gas / Activity model", "p_boost": 150000.0, "variation": ""},
+                "V-101": {"type": "ControlValve", "thermo": "Ideal Gas / Activity model", "opening": 1.0, "variation": ""},
+                "C-101": {"type": "DistillationColumn", "thermo": "Ideal Gas / Activity model", "variation": "Sieve Tray Column"}
+            }
+            st.session_state.fs_connections = [
+                {"from": "Feed Boundary", "to": "R-101", "stream": "S-101"},
+                {"from": "R-101", "to": "P-101", "stream": "S-102"},
+                {"from": "P-101", "to": "V-101", "stream": "S-103"},
+                {"from": "V-101", "to": "C-101", "stream": "S-104"},
+                {"from": "C-101", "to": "Product Boundary", "stream": "S-105"},
+                {"from": "C-101", "to": "Product Boundary", "stream": "S-106"}
+            ]
+            st.session_state.fs_boundaries = {
+                "S-101": {"T": 305.0, "P": 101325.0, "F": 20.0, "z": {"water": 0.80, "glucose": 0.15, "ethanol": 0.05}}
+            }
+            st.rerun()
+
+    # 1. FLUID PACKAGE & AGENTS
     st.sidebar.subheader("1. Fluid Package & Agents")
     search_list = ["Search and Add Chemical..."] + [k for k in species_map.keys() if k not in st.session_state.fs_species]
     selected_add_sp = st.sidebar.selectbox("Lookup Compounds", search_list, index=0)
@@ -698,7 +902,15 @@ elif simulation_mode == "Interactive Flowsheet Designer":
     # Add Equipment node
     st.sidebar.subheader("3. Add Equipment Node")
     add_id = st.sidebar.text_input("Node Identifier", "P-101")
-    add_type = st.sidebar.selectbox("Equipment Type", ["Pump", "ControlValve", "Bioreactor", "DistillationColumn", "Mixer"])
+    add_type = st.sidebar.selectbox(
+        "Equipment Type", 
+        [
+            "Pump", "Compressor", "Expander", "ControlValve", 
+            "Heater", "Cooler", "HeatExchanger", 
+            "FlashDrum", "Splitter", "SolidLiquidSeparator", "MembraneUnit", 
+            "AbsorptionColumn", "DistillationColumn", "Bioreactor", "CSTR", "Mixer"
+        ]
+    )
     local_pkg = st.sidebar.selectbox("Local Fluid Package", ["Default (Global)", "Ideal Gas / Activity model", "Peng-Robinson EOS", "e-NRTL Electrolytes", "PINN ML Surrogate"])
     
     col_variation = "Sieve Tray Column"
@@ -714,10 +926,11 @@ elif simulation_mode == "Interactive Flowsheet Designer":
             st.session_state.fs_units[add_id] = {
                 "type": add_type,
                 "thermo": st.session_state.fs_fluid_pkg if local_pkg == "Default (Global)" else local_pkg,
-                "opening": 1.0,     # Valve parameter
-                "p_boost": 150000.0, # Pump parameter
-                "volume": 2.0,       # Reactor parameter
-                "variation": col_variation
+                "opening": 1.0,
+                "p_boost": 150000.0,
+                "volume": 2.0,
+                "variation": col_variation,
+                "t_target": 350.0
             }
             st.sidebar.success(f"Added {add_type} {add_id}")
             
@@ -800,17 +1013,42 @@ elif simulation_mode == "Interactive Flowsheet Designer":
     for uid, udata in st.session_state.fs_units.items():
         utype = udata["type"]
         if utype == "Pump":
-            unit_obj = FlowsheetPump(uid, uid, p_boost=udata["p_boost"])
+            unit_obj = FlowsheetPump(uid, uid, p_boost=udata.get("p_boost", 150000.0))
+        elif utype == "Compressor":
+            unit_obj = Compressor(uid, uid, pressure_ratio=udata.get("pressure_ratio", 3.0))
+        elif utype == "Expander":
+            unit_obj = Expander(uid, uid, pressure_ratio=udata.get("pressure_ratio", 0.33))
         elif utype == "ControlValve":
             unit_obj = ControlValve(uid, uid, cv=0.8)
-            unit_obj.open_fraction = udata["opening"]
+            unit_obj.open_fraction = udata.get("opening", 1.0)
+        elif utype == "Heater":
+            unit_obj = Heater(uid, uid, t_target=udata.get("t_target", 373.15))
+        elif utype == "Cooler":
+            unit_obj = Cooler(uid, uid, t_target=udata.get("t_target", 298.15))
+        elif utype == "HeatExchanger":
+            unit_obj = HeatExchanger(uid, uid, u_area=2500.0)
+        elif utype == "FlashDrum":
+            unit_obj = FlashDrum(uid, uid, temp_vessel=udata.get("t_target", 350.0))
+        elif utype == "Splitter":
+            unit_obj = Splitter(uid, uid, split_ratios=[0.5, 0.5])
+        elif utype == "SolidLiquidSeparator":
+            unit_obj = SolidLiquidSeparator(uid, uid, recovery_liquid=0.90)
+        elif utype == "MembraneUnit":
+            unit_obj = MembraneUnit(uid, uid, recovery_ratio=0.65)
+        elif utype == "AbsorptionColumn":
+            unit_obj = AbsorptionColumn(uid, uid, target_solute="co2")
         elif utype == "Bioreactor":
-            unit_obj = JacketedBioreactor(uid, uid, volume_init=udata["volume"], s_in=180.0, u_coeff=600.0, area=5.0, temp_sp=310.15, pid_controller=PIDController(10,2,0.1,0.05,0,1))
+            unit_obj = JacketedBioreactor(uid, uid, volume_init=udata.get("volume", 2.0), s_in=180.0, u_coeff=600.0, area=5.0, temp_sp=310.15, pid_controller=PIDController(10,2,0.1,0.05,0,1))
+        elif utype == "CSTR":
+            unit_obj = IdealCSTR(uid, uid, volume=udata.get("volume", 2.0))
         elif utype == "DistillationColumn":
             unit_obj = BinaryDistillationColumn(uid, uid, num_stages=12, feed_stage=6, reflux_ratio=2.5)
         elif utype == "Mixer":
             unit_obj = FlowsheetMixer(uid, uid)
-        unit_obj.thermo_base = udata["thermo"]
+        else:
+            unit_obj = FlowsheetPump(uid, uid)
+
+        unit_obj.thermo_base = udata.get("thermo", st.session_state.fs_fluid_pkg)
         units_obj_map[uid] = unit_obj
         units_obj_list.append(unit_obj)
         
@@ -834,68 +1072,97 @@ elif simulation_mode == "Interactive Flowsheet Designer":
             st_obj.set_val("F", spec["F"])
             st_obj.set_val("z", spec["z"])
             
-    # 5. Run sequential modular flowsheet simulation
-    # Simple topological sorting: execute units in order of feeds
+    # 5. Multi-Pass Sequential Modular Flowsheet Simulation Engine
+    # Eliminates naming order bugs and converges forward chains & recycle loops
     if len(units_obj_map) > 0:
-        # Simple sequence for test chain: Feed -> Pump -> Valve -> Bioreactor / Distillation
-        # For general cases, execute all units topological sequence
-        ordered_keys = sorted(list(units_obj_map.keys()))
-        for k in ordered_keys:
-            unit = units_obj_map[k]
-            # Verify inlets have values before running
-            if unit.inlets and all(i.F is not None for i in unit.inlets):
-                in_st = unit.inlets[0]
-                out_st = unit.outlets[0] if unit.outlets else None
-                
-                # Check Local Thermodynamic Base and solve VLE
-                species_list = [species_map[sp] for sp in st.session_state.fs_species]
-                
-                # Run unit simulation
-                if isinstance(unit, FlowsheetPump):
-                    unit.run_simulation((0,0), [], species_map=species_map_id)
-                elif isinstance(unit, ControlValve):
-                    # valve delta P drop
-                    unit.run_simulation((0,0), [], p_in=in_st.P, p_out=in_st.P - 20000.0)
-                    if out_st:
-                        out_st.T = in_st.T - 0.2
-                        out_st.P = in_st.P - 20000.0
-                        out_st.F = in_st.F
-                        out_st.z = in_st.z.copy()
-                elif isinstance(unit, JacketedBioreactor):
-                    # Dynamic reactor simulation step
-                    if out_st:
-                        out_st.T = unit.temp_sp
-                        out_st.P = in_st.P
-                        out_st.F = in_st.F
-                        # convert 5% substrate to product
-                        out_st.z = in_st.z.copy()
-                elif isinstance(unit, FlowsheetMixer):
-                    unit.run_simulation((0,0), [], species_map=species_map_id)
-                elif isinstance(unit, BinaryDistillationColumn):
-                    # distillation column splits overhead and bottoms
-                    # for binary flowsheet modeling:
-                    if len(unit.outlets) >= 2:
-                        d_out = unit.outlets[0]
-                        b_out = unit.outlets[1]
-                        
-                        d_out.T = in_st.T - 10.0
-                        d_out.P = in_st.P
-                        d_out.F = in_st.F * 0.4
-                        
-                        b_out.T = in_st.T + 15.0
-                        b_out.P = in_st.P
-                        b_out.F = in_st.F * 0.6
-                        
-                        # composition separation
-                        keys = list(in_st.z.keys())
-                        if len(keys) >= 2:
-                            d_out.z = {keys[0]: 0.85, keys[1]: 0.15}
-                            b_out.z = {keys[0]: 0.05, keys[1]: 0.95}
-                    elif out_st:
-                        out_st.T = in_st.T
-                        out_st.P = in_st.P
-                        out_st.F = in_st.F
-                        out_st.z = in_st.z.copy()
+        max_sweeps = 25
+        tol = 1e-4
+        for sweep in range(max_sweeps):
+            prev_snapshot = {
+                s_id: (s.F if s.F is not None else -1.0, s.T if s.T is not None else -1.0)
+                for s_id, s in streams_obj_map.items()
+            }
+            
+            for uid, unit in units_obj_map.items():
+                if unit.inlets and all(i.F is not None and i.F >= 0 for i in unit.inlets):
+                    in_st = unit.inlets[0]
+                    out_st = unit.outlets[0] if unit.outlets else None
+                    
+                    if isinstance(unit, FlowsheetPump):
+                        unit.run_simulation((0,0), [], species_map=species_map_id)
+                    elif isinstance(unit, Compressor):
+                        unit.run_simulation((0,0), [], species_map=species_map_id)
+                    elif isinstance(unit, Expander):
+                        unit.run_simulation((0,0), [], species_map=species_map_id)
+                    elif isinstance(unit, Heater):
+                        unit.run_simulation((0,0), [], species_map=species_map_id)
+                    elif isinstance(unit, Cooler):
+                        unit.run_simulation((0,0), [], species_map=species_map_id)
+                    elif isinstance(unit, HeatExchanger):
+                        unit.run_simulation((0,0), [], species_map=species_map_id)
+                    elif isinstance(unit, FlashDrum):
+                        unit.run_simulation((0,0), [], species_map=species_map_id)
+                    elif isinstance(unit, Splitter):
+                        unit.run_simulation((0,0), [], species_map=species_map_id)
+                    elif isinstance(unit, SolidLiquidSeparator):
+                        unit.run_simulation((0,0), [], species_map=species_map_id)
+                    elif isinstance(unit, MembraneUnit):
+                        unit.run_simulation((0,0), [], species_map=species_map_id)
+                    elif isinstance(unit, AbsorptionColumn):
+                        unit.run_simulation((0,0), [], species_map=species_map_id)
+                    elif isinstance(unit, IdealCSTR):
+                        unit.run_simulation((0,0), [], species_map=species_map_id)
+                    elif isinstance(unit, FlowsheetMixer):
+                        unit.run_simulation((0,0), [], species_map=species_map_id)
+                    elif isinstance(unit, ControlValve):
+                        unit.run_simulation((0,0), [], p_in=in_st.P, p_out=max(1000.0, in_st.P - 20000.0))
+                        if out_st:
+                            out_st.T = in_st.T - 0.2
+                            out_st.P = max(1000.0, in_st.P - 20000.0)
+                            out_st.F = in_st.F
+                            out_st.z = in_st.z.copy()
+                    elif isinstance(unit, JacketedBioreactor):
+                        if out_st:
+                            out_st.T = unit.temp_sp
+                            out_st.P = in_st.P
+                            out_st.F = in_st.F
+                            out_st.z = in_st.z.copy()
+                            if "glucose" in out_st.z and "ethanol" in out_st.z:
+                                conv = out_st.z["glucose"] * 0.40
+                                out_st.z["glucose"] -= conv
+                                out_st.z["ethanol"] += conv * 0.60
+                                if "co2" in out_st.z:
+                                    out_st.z["co2"] += conv * 0.40
+                    elif isinstance(unit, BinaryDistillationColumn):
+                        if len(unit.outlets) >= 2:
+                            d_out = unit.outlets[0]
+                            b_out = unit.outlets[1]
+                            d_out.T = in_st.T - 10.0
+                            d_out.P = in_st.P
+                            d_out.F = in_st.F * 0.4
+                            b_out.T = in_st.T + 15.0
+                            b_out.P = in_st.P
+                            b_out.F = in_st.F * 0.6
+                            keys = list(in_st.z.keys())
+                            if len(keys) >= 2:
+                                d_out.z = {keys[0]: 0.85, keys[1]: 0.15}
+                                b_out.z = {keys[0]: 0.05, keys[1]: 0.95}
+                        elif out_st:
+                            out_st.T = in_st.T
+                            out_st.P = in_st.P
+                            out_st.F = in_st.F
+                            out_st.z = in_st.z.copy()
+                            
+            # Check convergence
+            deltas = []
+            for s_id, s in streams_obj_map.items():
+                prev_f, prev_t = prev_snapshot.get(s_id, (-1.0, -1.0))
+                curr_f = s.F if s.F is not None else -1.0
+                curr_t = s.T if s.T is not None else -1.0
+                if prev_f >= 0 and curr_f >= 0:
+                    deltas.append(max(abs(curr_f - prev_f) / max(prev_f, 1e-4), abs(curr_t - prev_t) / max(prev_t, 1e-4)))
+            if deltas and max(deltas) < tol:
+                break
 
     # Compile flowsheet layout for Mermaid P&ID representation
     flow_layout = PIDLayout("Custom Flowsheet P&ID")

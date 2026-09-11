@@ -16,6 +16,8 @@ class JacketedBioreactor(BaseUnit):
         self.area = area
         self.temp_sp = temp_sp
         self.controller = pid_controller
+        self.heat_duty = 0.0
+        self.work_input = 0.0
 
     def odes(self, t: float, state: list, f_feed: float, f_jacket: float, t_jacket_in: float,
              kinetics_fn) -> list:
@@ -52,13 +54,26 @@ class JacketedBioreactor(BaseUnit):
 
     def run_simulation(self, time_span: tuple, initial_state: list, **kwargs) -> dict:
         """
-        Runs the dynamic simulation using solve_ivp.
-        kwargs must supply:
-          - 'kinetics_fn': function mapping (S, T) -> (mu, qp, yield_xs, maintenance)
-          - 'f_feed': feed rate (m3/h)
-          - 't_jacket_in': jacket inlet temperature (Kelvin)
+        Runs the dynamic simulation using solve_ivp, or propagates steady-state flowsheet stream.
         """
+        if self.inlets and self.inlets[0].F is not None and self.inlets[0].F > 0:
+            in_st = self.inlets[0]
+            if self.outlets:
+                out_st = self.outlets[0]
+                out_st.T = self.temp_sp
+                out_st.P = in_st.P
+                out_st.F = in_st.F
+                out_st.z = in_st.z.copy() if in_st.z else {}
+                if "glucose" in out_st.z and "ethanol" in out_st.z:
+                    conv = out_st.z["glucose"] * 0.40
+                    out_st.z["glucose"] -= conv
+                    out_st.z["ethanol"] += conv * 0.60
+                    if "co2" in out_st.z:
+                        out_st.z["co2"] += conv * 0.40
+
         kinetics_fn = kwargs.get("kinetics_fn")
+        if kinetics_fn is None or not initial_state:
+            return {"status": "steady_state_propagated"}
         f_feed = kwargs.get("f_feed", 0.05)
         t_jacket_in = kwargs.get("t_jacket_in", 280.0)
         
