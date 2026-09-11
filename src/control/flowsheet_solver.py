@@ -426,4 +426,111 @@ class FlowsheetSolver:
             "high_risk_deviations_count": high_risk_count
         }
 
+    @classmethod
+    def compile_flowsheet_superstructure(cls, feed_stream: Any = None,
+                                         species_map: Optional[dict] = None,
+                                         components_list: Optional[list] = None,
+                                         feed_flow_mol_s: Optional[float] = None,
+                                         feed_fractions: Optional[list] = None,
+                                         steam_price: float = 7.50,
+                                         electricity_price: float = 0.085,
+                                         cooling_price: float = 0.354,
+                                         carbon_tax_rate: float = 50.0,
+                                         crf: float = 0.16275,
+                                         operating_hours: float = 8000.0) -> Dict[str, Any]:
+        """
+        Synthesizes multi-component distillation separation sequences (Direct, Indirect,
+        Distributed, Dividing-Wall Column Petlyuk) and computes multi-objective Pareto trade-offs.
+        """
+        from src.optimization.sequence_synthesizer import SeparationSequencer
+        from src.optimization.pareto_optimizer import ParetoOptimizer
+
+        sp_map = species_map or {}
+
+        # 1. Determine Feed Flow and Compositions
+        flow_mol_s = 100.0
+        fractions = [0.35, 0.40, 0.25]
+        comps = components_list or ["benzene", "toluene", "octane"]
+
+        if feed_stream is not None:
+            if hasattr(feed_stream, "m_flow") and hasattr(feed_stream, "MW") and feed_stream.MW and feed_stream.MW > 0:
+                flow_mol_s = max(1.0, (feed_stream.m_flow / feed_stream.MW) * 1000.0)
+            elif hasattr(feed_stream, "flow") and feed_stream.flow and feed_stream.flow > 0:
+                flow_mol_s = max(1.0, feed_stream.flow)
+
+            if hasattr(feed_stream, "z") and feed_stream.z:
+                if isinstance(feed_stream.z, dict):
+                    sorted_z = sorted(feed_stream.z.items(), key=lambda x: x[1], reverse=True)
+                    if len(sorted_z) >= 3:
+                        comps = [k for k, v in sorted_z[:3]]
+                        fractions = [v for k, v in sorted_z[:3]]
+                    elif len(sorted_z) == 2:
+                        comps = [sorted_z[0][0], sorted_z[1][0], "octane"]
+                        fractions = [sorted_z[0][1] * 0.7, sorted_z[1][1], sorted_z[0][1] * 0.3]
+                elif isinstance(feed_stream.z, list) and len(feed_stream.z) >= 3:
+                    fractions = feed_stream.z[:3]
+
+        if feed_flow_mol_s is not None:
+            flow_mol_s = float(feed_flow_mol_s)
+        if feed_fractions is not None and len(feed_fractions) >= 3:
+            fractions = list(feed_fractions[:3])
+        if components_list is not None and len(components_list) >= 3:
+            comps = list(components_list[:3])
+
+        # Normalize fractions
+        tot_f = sum(fractions)
+        fractions = [f / tot_f for f in fractions]
+
+        # 2. Run Separation Synthesis
+        synth_res = SeparationSequencer.synthesize_all_sequences(
+            feed_flow_mol_s=flow_mol_s,
+            feed_fractions=fractions,
+            components=comps,
+            species_map=sp_map,
+            steam_price_usd_per_gj=steam_price,
+            cooling_price_usd_per_gj=cooling_price,
+            electricity_price_usd_per_kwh=electricity_price,
+            carbon_tax_usd_per_tonne=carbon_tax_rate,
+            crf=crf,
+            operating_hours=operating_hours
+        )
+
+        # 3. Multi-Objective Pareto Optimization
+        alphas_val = [synth_res["mixture_info"]["relative_volatilities"].get(c, 1.0) for c in synth_res["mixture_info"]["components"]]
+        s_params = {
+            "feed_flow_mol_s": flow_mol_s,
+            "feed_fractions": fractions,
+            "alphas": alphas_val,
+            "steam_price_usd_per_gj": steam_price,
+            "cooling_price_usd_per_gj": cooling_price,
+            "carbon_tax_usd_per_tonne": carbon_tax_rate,
+            "crf": crf
+        }
+        pareto_res = ParetoOptimizer.generate_pareto_frontier(
+            synth_res["candidate_objects"],
+            synthesis_params=s_params
+        )
+
+        # 4. Summary & Optimal Architecture
+        best_cand = synth_res["optimal_sequence"]
+
+        return {
+            "synthesis_result": synth_res,
+            "pareto_result": pareto_res,
+            "candidates": synth_res["candidates"],
+            "optimal_sequence": best_cand,
+            "optimal_candidate_name": synth_res["optimal_candidate_name"],
+            "dwc_benchmarks": synth_res["dwc_benchmarks"],
+            "mixture_info": synth_res["mixture_info"],
+            "summary": {
+                "optimal_name": best_cand["sequence_name"],
+                "min_tac_usd_yr": best_cand["total_annualized_cost_tac_usd"],
+                "dwc_energy_savings_pct": synth_res["dwc_benchmarks"]["energy_savings_pct"],
+                "dwc_capex_savings_pct": synth_res["dwc_benchmarks"]["capex_savings_pct"],
+                "carbon_abatement_tonnes_yr": synth_res["dwc_benchmarks"]["carbon_abatement_tonnes_yr"],
+                "pareto_frontier_points_count": pareto_res["pareto_count"]
+            }
+        }
+
+
 

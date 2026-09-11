@@ -43,6 +43,7 @@ from src.control.dynamic_engine import DynamicSimulationEngine
 from src.reporting.report_generator import ReportGenerator
 from src.economics.pinch_analysis import PinchAnalyzer, ThermalStream
 from src.safety import ReliefValveSizer, HAZOPAnalyzer, API_ORIFICE_SIZES
+from src.optimization import SeparationSequencer, SequenceCandidate, ParetoOptimizer
 
 # Force Streamlit to reload modified submodules to prevent caching errors on Streamlit Cloud
 import importlib
@@ -75,6 +76,8 @@ import src.economics.pinch_analysis
 import src.economics.lca_engine
 import src.safety.relief_sizing
 import src.safety.hazop_analyzer
+import src.optimization.sequence_synthesizer
+import src.optimization.pareto_optimizer
 importlib.reload(src.database.loader)
 importlib.reload(src.visualization.svg_flowsheet)
 importlib.reload(src.visualization.pid_layout)
@@ -104,6 +107,8 @@ importlib.reload(src.economics.pinch_analysis)
 importlib.reload(src.economics.lca_engine)
 importlib.reload(src.safety.relief_sizing)
 importlib.reload(src.safety.hazop_analyzer)
+importlib.reload(src.optimization.sequence_synthesizer)
+importlib.reload(src.optimization.pareto_optimizer)
 
 # Page Config
 st.set_page_config(
@@ -1311,7 +1316,7 @@ elif simulation_mode == "Interactive Flowsheet Designer":
     mapped_sp = {sp.id: sp for sp in [species_map[k] for k in st.session_state.fs_species]}
 
     # RENDER INTERACTIVE TABS
-    tab_pid, tab_mass, tab_energy, tab_vle, tab_econ, tab_dynamic, tab_pinch, tab_lca, tab_safety = st.tabs([
+    tab_pid, tab_mass, tab_energy, tab_vle, tab_econ, tab_dynamic, tab_pinch, tab_lca, tab_safety, tab_opt = st.tabs([
         "Flowsheet Canvas & P&ID", 
         "Mass Balance Summary", 
         "Energy Balance Summary", 
@@ -1320,7 +1325,8 @@ elif simulation_mode == "Interactive Flowsheet Designer":
         "Dynamic Control & Real-Time Transients",
         "Pinch Energy Integration & Heat Recovery",
         "Environmental LCA & Decarbonization Studio",
-        "Process Safety & HAZOP Engineering"
+        "Process Safety & HAZOP Engineering",
+        "Superstructure Synthesis & Pareto Optimization"
     ])
     
     with tab_pid:
@@ -2887,3 +2893,228 @@ elif simulation_mode == "Interactive Flowsheet Designer":
             use_container_width=False
         )
 
+
+    with tab_opt:
+        st.markdown("<div class='section-header'>🔬 Superstructure Synthesis & Multi-Objective Pareto Optimization</div>", unsafe_allow_html=True)
+        st.markdown(
+            "Algorithmic synthesis of multi-component separation trains comparing **Direct**, **Indirect**, "
+            "**Distributed Prefractionator**, and **Dividing-Wall Column (DWC Petlyuk)** configurations. "
+            "Maps the multi-objective **Pareto Frontier** across Capital Expenditure (CAPEX) vs. Scope 2 Greenhouse Gas Emissions."
+        )
+
+        # 1. Configuration Toolbar
+        st.write("##### 🎛️ Feed Mixture & Economic Optimization Parameters")
+        c_p1, c_p2, c_p3, c_p4 = st.columns([1.5, 1.2, 1.2, 1.2])
+
+        with c_p1:
+            mix_preset = st.selectbox(
+                "Multi-Component Feed Preset",
+                [
+                    "Aromatics BTX (Benzene / Toluene / Octane)",
+                    "Alcohols (Methanol / Ethanol / Water)",
+                    "Light Alkanes (Propane / Butane / Pentane)",
+                    "Custom Ternary Mixture"
+                ],
+                index=0,
+                key="opt_mix_preset"
+            )
+
+        if "Aromatics BTX" in mix_preset:
+            default_comps = ["benzene", "toluene", "octane"]
+            default_z = [0.35, 0.40, 0.25]
+        elif "Alcohols" in mix_preset:
+            default_comps = ["methanol", "ethanol", "water"]
+            default_z = [0.40, 0.35, 0.25]
+        elif "Light Alkanes" in mix_preset:
+            default_comps = ["propane", "butane", "pentane"]
+            default_z = [0.30, 0.45, 0.25]
+        else:
+            default_comps = ["benzene", "toluene", "octane"]
+            default_z = [0.333, 0.333, 0.334]
+
+        with c_p2:
+            feed_flow_val = st.slider("Total Feed Flowrate (mol/s)", 10.0, 300.0, 100.0, 5.0, key="opt_feed_flow")
+        with c_p3:
+            steam_price_val = st.slider("Steam Cost ($/GJ)", 3.0, 20.0, 7.50, 0.50, key="opt_steam_price")
+        with c_p4:
+            carbon_tax_val = st.slider("Carbon Tax ($/tonne)", 0.0, 250.0, 50.0, 5.0, key="opt_carbon_tax")
+
+        c_f1, c_f2, c_f3, c_f4 = st.columns(4)
+        with c_f1:
+            z_a = st.slider(f"Molar Fraction: {default_comps[0].capitalize()} (A)", 0.05, 0.90, default_z[0], 0.01, key="opt_za")
+        with c_f2:
+            z_b = st.slider(f"Molar Fraction: {default_comps[1].capitalize()} (B)", 0.05, 0.90, default_z[1], 0.01, key="opt_zb")
+        with c_f3:
+            z_c = st.slider(f"Molar Fraction: {default_comps[2].capitalize()} (C)", 0.05, 0.90, default_z[2], 0.01, key="opt_zc")
+        with c_f4:
+            crf_pct = st.slider("Capital Recovery Factor (CRF %)", 8.0, 25.0, 16.3, 0.5, key="opt_crf") / 100.0
+
+        opt_fractions = [z_a, z_b, z_c]
+
+        # Compile Superstructure Optimization
+        opt_compiled = FlowsheetSolver.compile_flowsheet_superstructure(
+            feed_flow_mol_s=feed_flow_val,
+            feed_fractions=opt_fractions,
+            components_list=default_comps,
+            species_map=mapped_sp,
+            steam_price=steam_price_val,
+            cooling_price=0.354,
+            electricity_price=0.085,
+            carbon_tax_rate=carbon_tax_val,
+            crf=crf_pct
+        )
+
+        synth_res = opt_compiled["synthesis_result"]
+        pareto_res = opt_compiled["pareto_result"]
+        optimal_cand = opt_compiled["optimal_sequence"]
+        dwc_bench = opt_compiled["dwc_benchmarks"]
+        cands = opt_compiled["candidates"]
+
+        # 2. Top 5 Metric Cards
+        st.write("##### 📊 Executive Optimization Performance Summary")
+        m1, m2, m3, m4, m5 = st.columns(5)
+        with m1:
+            st.metric("🏆 Globally Optimal Sequence", optimal_cand["sequence_name"].split("(")[0].strip(), help="Minimum Total Annualized Cost (TAC) configuration")
+        with m2:
+            st.metric("Minimum TAC ($/yr)", f"${optimal_cand['total_annualized_cost_tac_usd']:,.0f}", help="Total Annualized Cost = CAPEX * CRF + OPEX + Carbon Tax")
+        with m3:
+            st.metric("DWC Energy Savings", f"{dwc_bench['energy_savings_pct']:.1f} %", f"-{dwc_bench['energy_savings_kW']:,.0f} kW", delta_color="inverse")
+        with m4:
+            st.metric("DWC Capital Savings", f"{dwc_bench['capex_savings_pct']:.1f} %", f"-${dwc_bench['capex_savings_usd']:,.0f}", delta_color="inverse")
+        with m5:
+            st.metric("GHG Abatement", f"{dwc_bench['carbon_abatement_tonnes_yr']:,.0f} t/yr", f"-{dwc_bench['energy_savings_pct']:.0f}% Scope 2", delta_color="inverse")
+
+        # 3. Interactive Plotly Charts
+        ch1, ch2 = st.columns(2)
+
+        with ch1:
+            fig_pareto = go.Figure()
+
+            all_pts = pareto_res["all_points"]
+            seq_colors = {
+                "Direct": "#3b82f6",
+                "Indirect": "#8b5cf6",
+                "Distributed": "#f59e0b",
+                "DWC": "#10b981"
+            }
+
+            for stype, col in seq_colors.items():
+                group_pts = [p for p in all_pts if p["seq_type"] == stype]
+                if group_pts:
+                    fig_pareto.add_trace(go.Scatter(
+                        x=[p["capex_usd"] for p in group_pts],
+                        y=[p["annual_carbon_emissions_tonnes"] for p in group_pts],
+                        mode="markers",
+                        name=f"{stype} Designs",
+                        marker=dict(size=9, color=col, symbol="circle"),
+                        text=[f"<b>{p['design_name']}</b><br>CAPEX: ${p['capex_usd']:,.0f}<br>Emissions: {p['annual_carbon_emissions_tonnes']:,.0f} t/yr<br>TAC: ${p['total_annualized_cost_tac_usd']:,.0f}/yr" for p in group_pts],
+                        hoverinfo="text"
+                    ))
+
+            p_pts = pareto_res["pareto_points"]
+            if p_pts:
+                fig_pareto.add_trace(go.Scatter(
+                    x=[p["capex_usd"] for p in p_pts],
+                    y=[p["annual_carbon_emissions_tonnes"] for p in p_pts],
+                    mode="lines+markers",
+                    name="<b>Pareto Optimal Frontier</b>",
+                    line=dict(color="#ef4444", width=3, dash="dash"),
+                    marker=dict(size=13, color="#ef4444", symbol="star"),
+                    text=[f"<b>PARETO: {p['design_name']}</b><br>CAPEX: ${p['capex_usd']:,.0f}<br>Emissions: {p['annual_carbon_emissions_tonnes']:,.0f} t/yr<br>MAC: ${p['marginal_abatement_cost_usd_per_tonne']:.2f}/tonne" for p in p_pts],
+                    hoverinfo="text"
+                ))
+
+            fig_pareto.update_layout(
+                title="<b>Multi-Objective Pareto Frontier: CAPEX vs. Annual GHG Emissions</b>",
+                xaxis_title="Capital Investment CAPEX (USD)",
+                yaxis_title="Annual GHG Emissions (tonnes CO2,eq / yr)",
+                height=420,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                margin=dict(l=20, r=20, t=60, b=20)
+            )
+            st.plotly_chart(fig_pareto, use_container_width=True)
+
+        with ch2:
+            fig_econ_bar = go.Figure()
+
+            cand_names = [c["sequence_name"].split("(")[0].strip() for c in cands]
+            annual_capex = [c["capex_usd"] * crf_pct for c in cands]
+            annual_opex = [c["annual_utility_opex_usd"] for c in cands]
+            annual_tax = [c["annual_carbon_tax_usd"] for c in cands]
+
+            fig_econ_bar.add_trace(go.Bar(
+                name="Annualized Capital (CAPEX × CRF)",
+                x=cand_names,
+                y=annual_capex,
+                marker_color="#3b82f6"
+            ))
+            fig_econ_bar.add_trace(go.Bar(
+                name="Utility Fuel OPEX (Steam + Water)",
+                x=cand_names,
+                y=annual_opex,
+                marker_color="#f59e0b"
+            ))
+            fig_econ_bar.add_trace(go.Bar(
+                name="Carbon Tax Liability",
+                x=cand_names,
+                y=annual_tax,
+                marker_color="#ef4444"
+            ))
+
+            fig_econ_bar.update_layout(
+                barmode="stack",
+                title="<b>Total Annualized Cost (TAC) Breakdown by Sequence ($/yr)</b>",
+                xaxis_title="Separation Sequence Candidate",
+                yaxis_title="Annualized Cost (USD/year)",
+                height=420,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                margin=dict(l=20, r=20, t=60, b=20)
+            )
+            st.plotly_chart(fig_econ_bar, use_container_width=True)
+
+        # 4. Dividing-Wall Column Architectural Callout
+        st.markdown("""
+        <div style="background-color: #ecfdf5; border-left: 5px solid #10b981; padding: 16px; border-radius: 6px; margin-bottom: 20px;">
+            <h4 style="color: #065f46; margin: 0 0 8px 0;">🏛️ Process Intensification: Dividing-Wall Column (DWC / Petlyuk) Technology</h4>
+            <p style="color: #047857; margin: 0; font-size: 0.95rem; line-height: 1.5;">
+                A <b>Dividing-Wall Column (DWC)</b> thermodynamically integrates a prefractionator and main column inside a single vertical shell partitioned by an internal baffle.
+                In conventional 2-column sequences, the intermediate volatility component <i>B</i> undergoes significant remixing entropy losses at the bottom of Column 1 or top of Column 2.
+                DWC eliminates remixing entirely, yielding a <b>25–35% reduction in reboiler steam</b> and <b>30% reduction in capital expenditure</b> by eliminating one distillation shell, condenser, reboiler, accumulator drum, and reflux pump.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # 5. Full Separation Schedule Table
+        st.write("##### 📋 Comprehensive Distillation Sequence Schedule & Sizing Metrics")
+        sched_rows = []
+        for rank, c in enumerate(synth_res["candidate_objects"], start=1):
+            is_best = "🏆 YES" if c.sequence_name == optimal_cand["sequence_name"] else "No"
+            sched_rows.append({
+                "Rank": rank,
+                "Sequence Architecture": c.sequence_name,
+                "Shells": c.columns_count,
+                "Total Trays": c.total_stages,
+                "Reboiler Duty (kW)": f"{c.total_reboiler_duty_kW:,.1f}",
+                "Condenser Duty (kW)": f"{c.total_condenser_duty_kW:,.1f}",
+                "Column Diameters (m)": ", ".join([f"{d:.2f}m" for d in c.column_diameters_m]),
+                "Column Heights (m)": ", ".join([f"{h:.1f}m" for h in c.column_heights_m]),
+                "CAPEX (USD)": f"${c.capex_usd:,.0f}",
+                "Annual OPEX ($/yr)": f"${c.annual_utility_opex_usd:,.0f}",
+                "GHG (t CO2/yr)": f"{c.annual_carbon_emissions_tonnes:,.0f}",
+                "Total Annualized Cost TAC ($/yr)": f"${c.total_annualized_cost_tac_usd:,.0f}",
+                "Optimal": is_best
+            })
+        st.dataframe(sched_rows, use_container_width=True)
+
+        # 6. Download Superstructure Synthesis Report
+        csv_seq = "Sequence Architecture,Shells,Total Trays,Reboiler Duty (kW),Condenser Duty (kW),CAPEX (USD),Annual OPEX (USD/yr),GHG (tonnes/yr),TAC (USD/yr)\n"
+        for c in synth_res["candidate_objects"]:
+            csv_seq += f'\"{c.sequence_name}\",{c.columns_count},{c.total_stages},{c.total_reboiler_duty_kW:.2f},{c.total_condenser_duty_kW:.2f},{c.capex_usd:.2f},{c.annual_utility_opex_usd:.2f},{c.annual_carbon_emissions_tonnes:.2f},{c.total_annualized_cost_tac_usd:.2f}\n'
+
+        st.download_button(
+            label="📑 Download Separation Superstructure Report (CSV)",
+            data=csv_seq,
+            file_name="superstructure_synthesis_report.csv",
+            mime="text/csv",
+            use_container_width=False
+        )
