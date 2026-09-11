@@ -105,13 +105,15 @@ EQUIPMENT_PORTS: Dict[str, List[PortDefinition]] = {
     ]
 }
 
-# Register BinaryDistillationColumn alias
+# Register DistillationColumn aliases
 EQUIPMENT_PORTS["BinaryDistillationColumn"] = EQUIPMENT_PORTS["DistillationColumn"]
+EQUIPMENT_PORTS["DynamicDistillationColumn"] = EQUIPMENT_PORTS["DistillationColumn"]
 
 # Standard default dimensions (pixels) for canvas nodes
 DEFAULT_UNIT_DIMENSIONS: Dict[str, Dict[str, int]] = {
     "DistillationColumn": {"width": 80, "height": 170},
     "BinaryDistillationColumn": {"width": 80, "height": 170},
+    "DynamicDistillationColumn": {"width": 80, "height": 170},
     "AbsorptionColumn": {"width": 80, "height": 160},
     "HeatExchanger": {"width": 95, "height": 70},
     "Bioreactor": {"width": 90, "height": 110},

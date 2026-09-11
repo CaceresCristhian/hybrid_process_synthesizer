@@ -36,6 +36,10 @@ from src.economics import (
     UtilityCosting, EconomicAnalyzer, DEFAULT_CEPCI, 
     MATERIAL_FACTORS, DEFAULT_UTILITY_RATES
 )
+from src.units.dynamic_column import DynamicDistillationColumn
+from src.control.auto_tuning import AutoTuner
+from src.control.dynamic_engine import DynamicSimulationEngine
+from src.reporting.report_generator import ReportGenerator
 
 # Force Streamlit to reload modified submodules to prevent caching errors on Streamlit Cloud
 import importlib
@@ -54,7 +58,11 @@ import src.units.compressor
 import src.units.columns
 import src.units.reactors
 import src.units.pump
+import src.units.dynamic_column
 import src.control.flowsheet_solver
+import src.control.auto_tuning
+import src.control.dynamic_engine
+import src.reporting.report_generator
 import src.economics.cost_correlations
 import src.economics.equipment_costing
 import src.economics.capital_costing
@@ -75,7 +83,11 @@ importlib.reload(src.units.compressor)
 importlib.reload(src.units.columns)
 importlib.reload(src.units.reactors)
 importlib.reload(src.units.pump)
+importlib.reload(src.units.dynamic_column)
 importlib.reload(src.control.flowsheet_solver)
+importlib.reload(src.control.auto_tuning)
+importlib.reload(src.control.dynamic_engine)
+importlib.reload(src.reporting.report_generator)
 importlib.reload(src.economics.cost_correlations)
 importlib.reload(src.economics.equipment_costing)
 importlib.reload(src.economics.capital_costing)
@@ -942,7 +954,7 @@ elif simulation_mode == "Interactive Flowsheet Designer":
             "Pump", "Compressor", "Expander", "ControlValve", 
             "Heater", "Cooler", "HeatExchanger", 
             "FlashDrum", "Splitter", "SolidLiquidSeparator", "MembraneUnit", 
-            "AbsorptionColumn", "DistillationColumn", "Bioreactor", "CSTR", "PFR", "EquilibriumReactor", "Mixer"
+            "AbsorptionColumn", "DistillationColumn", "DynamicDistillationColumn", "Bioreactor", "CSTR", "PFR", "EquilibriumReactor", "Mixer"
         ]
     )
     add_material = st.sidebar.selectbox("Material of Construction", ["Carbon Steel", "Stainless Steel 316", "Titanium", "Hastelloy C-276", "Monel"])
@@ -1096,6 +1108,8 @@ elif simulation_mode == "Interactive Flowsheet Designer":
             unit_obj = EquilibriumReactor(uid, uid, volume=udata.get("volume", 4.0), reaction_package=udata.get("reaction_package", "Haber-Bosch Ammonia Synthesis"))
         elif utype == "DistillationColumn":
             unit_obj = BinaryDistillationColumn(uid, uid, num_stages=12, feed_stage=6, reflux_ratio=2.5)
+        elif utype == "DynamicDistillationColumn":
+            unit_obj = DynamicDistillationColumn(uid, uid, num_stages=12, feed_stage=6, reflux_ratio=2.5)
         elif utype == "Mixer":
             unit_obj = FlowsheetMixer(uid, uid)
         else:
@@ -1286,12 +1300,13 @@ elif simulation_mode == "Interactive Flowsheet Designer":
     mapped_sp = {sp.id: sp for sp in [species_map[k] for k in st.session_state.fs_species]}
 
     # RENDER INTERACTIVE TABS
-    tab_pid, tab_mass, tab_energy, tab_vle, tab_econ = st.tabs([
+    tab_pid, tab_mass, tab_energy, tab_vle, tab_econ, tab_dynamic = st.tabs([
         "Flowsheet Canvas & P&ID", 
         "Mass Balance Summary", 
-        "Energy Balance Summary",
+        "Energy Balance Summary", 
         "VLE & Reaction Kinetics Explorer",
-        "Economics & Capital Costing (Turton/Guthrie)"
+        "Economics & Capital Costing (Turton/Guthrie)",
+        "Dynamic Control & Real-Time Transients"
     ])
     
     with tab_pid:
@@ -1743,5 +1758,313 @@ elif simulation_mode == "Interactive Flowsheet Designer":
                     margin=dict(l=20, r=20, t=40, b=20)
                 )
                 st.plotly_chart(fig_cf, use_container_width=True)
+
+    with tab_dynamic:
+        st.write("#### Real-Time Dynamic Distillation Control & Transients")
+        st.markdown(
+            "Rigorous stage-by-stage dynamic simulation with transient molar holdups $M_i$, hydraulic coupling, "
+            "decoupled level controllers ($LC_D$, $LC_B$), sensitive tray temperature control ($TC$), "
+            "and real-time disturbance scenarios."
+        )
+
+        # Initialize session state for dynamic simulation
+        if "dyn_engine" not in st.session_state:
+            dyn_col = DynamicDistillationColumn(
+                "C-101-DYN", "Dynamic Ethanol-Water Fractionator", 
+                num_stages=12, feed_stage=6, reflux_ratio=2.5
+            )
+            dyn_eng = DynamicSimulationEngine(dyn_col)
+            dyn_eng.run_transient(duration=50.0, dt=1.0)
+            st.session_state.dyn_engine = dyn_eng
+
+        dyn_eng = st.session_state.dyn_engine
+
+        # Controls Toolbar
+        st.write("##### 🕹️ Dynamic Simulation Operator Console")
+        op_col1, op_col2, op_col3, op_col4 = st.columns([1, 1, 1, 3])
+
+        with op_col1:
+            if st.button("▶ Step +10s", use_container_width=True, help="Simulate forward 10 seconds (dt=1.0s)"):
+                dyn_eng.run_transient(duration=10.0, dt=1.0)
+                st.rerun()
+
+        with op_col2:
+            if st.button("⏩ Run +60s", use_container_width=True, help="Simulate forward 60 seconds (dt=1.0s)"):
+                dyn_eng.run_transient(duration=60.0, dt=1.0)
+                st.rerun()
+
+        with op_col3:
+            if st.button("🔄 Reset Baseline", use_container_width=True, help="Reset dynamic column to nominal steady baseline"):
+                dyn_col = DynamicDistillationColumn(
+                    "C-101-DYN", "Dynamic Ethanol-Water Fractionator", 
+                    num_stages=12, feed_stage=6, reflux_ratio=2.5
+                )
+                dyn_eng = DynamicSimulationEngine(dyn_col)
+                dyn_eng.run_transient(duration=50.0, dt=1.0)
+                st.session_state.dyn_engine = dyn_eng
+                st.rerun()
+
+        with op_col4:
+            dist_choice = st.selectbox(
+                "Inject Process Disturbance Preset",
+                [
+                    "Nominal Baseline (Clear All Disturbances)",
+                    "Feed Flowrate Surge (+25% Feed Load)",
+                    "Feed Heavy Composition Drop (-20% Light Key)",
+                    "Feed Subcooling Thermal Chill (-15 K)",
+                    "Condenser Cooling Water Cut (-30% Condenser Duty)",
+                    "Reboiler Steam Loss (-25% Boilup Duty)"
+                ],
+                index=0
+            )
+
+        # Disturbance trigger and reset row
+        dist_c1, dist_c2 = st.columns([2, 4])
+        with dist_c1:
+            if st.button("⚡ Inject / Apply Disturbance", use_container_width=True):
+                if "Surge" in dist_choice:
+                    dyn_eng.inject_disturbance("feed_surge", magnitude=1.25)
+                elif "Composition" in dist_choice:
+                    dyn_eng.inject_disturbance("feed_composition_drop", magnitude=0.80)
+                elif "Subcooling" in dist_choice:
+                    dyn_eng.inject_disturbance("feed_subcooling", magnitude=15.0)
+                elif "Cooling Water" in dist_choice:
+                    dyn_eng.inject_disturbance("cooling_water_failure", magnitude=0.70)
+                elif "Steam Loss" in dist_choice:
+                    dyn_eng.inject_disturbance("steam_cut", magnitude=0.75)
+                else:
+                    dyn_eng.active_disturbances.clear()
+                st.rerun()
+
+        with dist_c2:
+            active_dist = dyn_eng.get_active_disturbances_summary()
+            st.info(f"**Active Disturbance Scenarios:** `{active_dist}` | **Current Simulation Clock:** `{dyn_eng.current_time:.1f} s`")
+
+        # Alarms Banner
+        alarms = dyn_eng.check_alarms()
+        if alarms:
+            for a in alarms:
+                if a["severity"] in ["CRITICAL", "HIGH"]:
+                    st.error(f"🚨 **Alarm {a['alarm_code']}** ({a['tag']}): {a['message']} | Measured: `{a['current_value']:.2f}` (Limit: `{a['threshold']:.2f}`)")
+                else:
+                    st.warning(f"⚠️ **Alarm {a['alarm_code']}** ({a['tag']}): {a['message']} | Measured: `{a['current_value']:.2f}` (Limit: `{a['threshold']:.2f}`)")
+        else:
+            st.success("🟢 **All Safety Alarms Normal**: Liquid holdups and tray temperatures operating within safety interlock boundaries.")
+
+        st.write("---")
+
+        # 4 Multi-channel strip charts
+        st.write("##### 📈 Real-Time Multi-Channel Strip Charts")
+        hist = dyn_eng.history
+        t_hist = hist["time"]
+
+        sc_col1, sc_col2 = st.columns(2)
+
+        with sc_col1:
+            # Channel 1: Compositions
+            fig_comp = go.Figure()
+            fig_comp.add_trace(go.Scatter(x=t_hist, y=hist["xD"], name="Distillate xD (Light)", line=dict(color="#3b82f6", width=2.5)))
+            fig_comp.add_trace(go.Scatter(x=t_hist, y=hist["xB"], name="Bottoms xB (Light)", line=dict(color="#f59e0b", width=2.5)))
+            fig_comp.add_trace(go.Scatter(x=t_hist, y=hist["x_sens"], name="Stage 6 x_sens", line=dict(color="#10b981", width=1.5, dash="dot")))
+            fig_comp.update_layout(
+                title="Channel 1: Product & Tray Compositions vs Time",
+                xaxis_title="Simulation Time (s)",
+                yaxis_title="Mole Fraction (x)",
+                height=320,
+                margin=dict(l=20, r=20, t=40, b=20)
+            )
+            st.plotly_chart(fig_comp, use_container_width=True)
+
+        with sc_col2:
+            # Channel 2: Temperatures
+            fig_temp = go.Figure()
+            fig_temp.add_trace(go.Scatter(x=t_hist, y=hist["T_condenser"], name="Condenser T_top (K)", line=dict(color="#06b6d4", width=2)))
+            fig_temp.add_trace(go.Scatter(x=t_hist, y=hist["T_sensitive"], name="Stage 6 T_sens (Control)", line=dict(color="#ef4444", width=2.5)))
+            fig_temp.add_trace(go.Scatter(x=t_hist, y=hist["T_reboiler"], name="Reboiler T_bot (K)", line=dict(color="#8b5cf6", width=2)))
+            fig_temp.add_hline(y=dyn_eng.column.temp_controller.setpoint, line_dash="dash", line_color="#dc2626", annotation_text="T_SP")
+            fig_temp.update_layout(
+                title="Channel 2: Column Temperature Profiles vs Time",
+                xaxis_title="Simulation Time (s)",
+                yaxis_title="Temperature (K)",
+                height=320,
+                margin=dict(l=20, r=20, t=40, b=20)
+            )
+            st.plotly_chart(fig_temp, use_container_width=True)
+
+        sc_col3, sc_col4 = st.columns(2)
+
+        with sc_col3:
+            # Channel 3: Vessel Levels
+            fig_lvl = go.Figure()
+            # Normalize to percent of nominal holdup
+            acc_pct = [m / 50.0 * 100.0 for m in hist["M_acc"]]
+            sump_pct = [m / 60.0 * 100.0 for m in hist["M_sump"]]
+            fig_lvl.add_trace(go.Scatter(x=t_hist, y=acc_pct, name="Accumulator Level (%)", line=dict(color="#0284c7", width=2.5)))
+            fig_lvl.add_trace(go.Scatter(x=t_hist, y=sump_pct, name="Sump Reboiler Level (%)", line=dict(color="#d97706", width=2.5)))
+            fig_lvl.add_hline(y=100.0, line_dash="dash", line_color="#10b981", annotation_text="Level Setpoint (100%)")
+            fig_lvl.add_hline(y=120.0, line_dash="dot", line_color="#f87171", annotation_text="LAH (120%)")
+            fig_lvl.add_hline(y=50.0, line_dash="dot", line_color="#ef4444", annotation_text="LAL (50%)")
+            fig_lvl.update_layout(
+                title="Channel 3: Vessel Liquid Inventories (% of Nominal)",
+                xaxis_title="Simulation Time (s)",
+                yaxis_title="Inventory (%)",
+                height=320,
+                margin=dict(l=20, r=20, t=40, b=20)
+            )
+            st.plotly_chart(fig_lvl, use_container_width=True)
+
+        with sc_col4:
+            # Channel 4: Controller Flow Rates
+            fig_flow = go.Figure()
+            fig_flow.add_trace(go.Scatter(x=t_hist, y=hist["reflux_flow"], name="Reflux L (mol/s)", line=dict(color="#2563eb", width=2)))
+            fig_flow.add_trace(go.Scatter(x=t_hist, y=hist["distillate_flow"], name="Distillate D (mol/s)", line=dict(color="#059669", width=2)))
+            fig_flow.add_trace(go.Scatter(x=t_hist, y=hist["bottoms_flow"], name="Bottoms B (mol/s)", line=dict(color="#d97706", width=2)))
+            fig_flow.add_trace(go.Scatter(x=t_hist, y=hist["vapor_boilup"], name="Vapor Boilup V (mol/s)", line=dict(color="#7c3aed", width=1.5, dash="dash")))
+            fig_flow.update_layout(
+                title="Channel 4: Manipulated & Output Flows vs Time",
+                xaxis_title="Simulation Time (s)",
+                yaxis_title="Molar Flow (mol/s)",
+                height=320,
+                margin=dict(l=20, r=20, t=40, b=20)
+            )
+            st.plotly_chart(fig_flow, use_container_width=True)
+
+        st.write("---")
+
+        # Auto-Tuning Laboratory Expander
+        with st.expander("🛠️ Distillation Temperature Auto-Tuning Laboratory (FOPDT & ZN/Cohen-Coon/IMC)", expanded=False):
+            st.write(
+                "Run an in-situ open-loop step test on the reflux flow $L$ to identify First-Order Plus Dead-Time (FOPDT) "
+                "dynamics and compute industrial tuning parameters."
+            )
+            at_c1, at_c2, at_c3, at_c4 = st.columns([1, 1, 1, 1])
+            with at_c1:
+                step_amp = st.number_input("Step Amplitude Δu (mol/s)", value=0.5, step=0.1)
+            with at_c2:
+                step_t = st.number_input("Step Injection Time (s)", value=5.0, step=1.0)
+            with at_c3:
+                step_dur = st.number_input("Total Duration (s)", value=120.0, step=10.0)
+            with at_c4:
+                run_test_btn = st.button("⚡ Run Open-Loop Step Test", use_container_width=True)
+
+            if run_test_btn:
+                with st.spinner("Injecting step change and fitting FOPDT transfer function..."):
+                    step_res = AutoTuner.perform_step_test(
+                        column=dyn_eng.column,
+                        step_input="reflux_flow",
+                        step_amplitude=step_amp,
+                        step_time=step_t,
+                        total_time=step_dur,
+                        dt=1.0
+                    )
+                    fopdt = AutoTuner.fit_fopdt(step_res["time"], step_res["input"], step_res["output"], dt=1.0)
+                    tuning_rules = AutoTuner.get_full_tuning_comparison(fopdt["Kp"], fopdt["theta"], fopdt["tau_p"])
+                    st.session_state.step_res = step_res
+                    st.session_state.fopdt = fopdt
+                    st.session_state.tuning_rules = tuning_rules
+                    st.success("FOPDT Model Identification and Tuning Synthesis Complete!")
+
+            if "fopdt" in st.session_state and st.session_state.fopdt is not None:
+                fopdt = st.session_state.fopdt
+                tr = st.session_state.tuning_rules
+
+                f_c1, f_c2, f_c3, f_c4 = st.columns(4)
+                f_c1.metric("Process Gain (Kp)", f"{fopdt['Kp']:.4f} K/(mol/s)")
+                f_c2.metric("Apparent Dead Time (θ)", f"{fopdt['theta']:.2f} s")
+                f_c3.metric("Time Constant (τp)", f"{fopdt['tau_p']:.2f} s")
+                f_c4.metric("Model Fit (R²)", f"{fopdt['r_squared']:.4f}")
+
+                # Step test response plot
+                step_res = st.session_state.step_res
+                fig_fit = go.Figure()
+                fig_fit.add_trace(go.Scatter(x=step_res["time"], y=step_res["output"], name="Actual Stage 6 Temp", line=dict(color="#ef4444", width=2.5)))
+                fig_fit.add_trace(go.Scatter(x=step_res["time"], y=fopdt["simulated_output"], name="FOPDT Model Fit", line=dict(color="#10b981", width=2, dash="dash")))
+                fig_fit.update_layout(
+                    title="Open-Loop Step Response vs FOPDT Model",
+                    xaxis_title="Time (s)",
+                    yaxis_title="Stage Temperature (K)",
+                    height=280,
+                    margin=dict(l=20, r=20, t=35, b=20)
+                )
+                st.plotly_chart(fig_fit, use_container_width=True)
+
+                # Tuning Rules Comparison Table
+                st.write("##### Synthesized Industrial PID / PI Tuning Rules")
+                t_rows = []
+                for rule_name, params in tr.items():
+                    t_rows.append({
+                        "Rule": rule_name,
+                        "Type": params.get("type", "PID"),
+                        "Gain Kc": f"{params.get('Kc', 0.0):.4f}",
+                        "Integral Time τ_I (s)": f"{params.get('tau_I', 0.0):.2f}" if params.get('tau_I') else "N/A",
+                        "Derivative Time τ_D (s)": f"{params.get('tau_D', 0.0):.2f}" if params.get('tau_D') else "0.0",
+                        "Ki (1/s)": f"{params.get('Ki', 0.0):.4f}" if params.get('Ki') else "N/A",
+                        "Kd (s)": f"{params.get('Kd', 0.0):.4f}" if params.get('Kd') else "0.0"
+                    })
+                st.dataframe(t_rows, use_container_width=True)
+
+                # Apply selected tuning
+                rule_options = list(tr.keys())
+                sel_rule = st.selectbox("Select Tuning Rule to Apply to TC", rule_options, index=rule_options.index("IMC_Moderate") if "IMC_Moderate" in rule_options else 0)
+                if st.button("Apply Selected Tuning to Temperature Controller"):
+                    applied = tr[sel_rule]
+                    dyn_eng.column.temp_controller.kp = abs(applied.get("Kc", 1.0))
+                    dyn_eng.column.temp_controller.ki = abs(applied.get("Ki", 0.05))
+                    dyn_eng.column.temp_controller.kd = abs(applied.get("Kd", 0.0))
+                    st.success(f"Applied {sel_rule} to C-101 TC: Kp={dyn_eng.column.temp_controller.kp:.4f}, Ki={dyn_eng.column.temp_controller.ki:.4f}, Kd={dyn_eng.column.temp_controller.kd:.4f}")
+
+        st.write("---")
+
+        # 5. Flowsheet Data Packages & Engineering Reporting
+        st.write("##### 📄 Flowsheet Data Packages & Engineering Reporting")
+        st.markdown(
+            "Export the complete flowsheet topology, mass/energy balance, equipment sizing, "
+            "and Turton & Guthrie economics to standardized data formats."
+        )
+
+        rep_c1, rep_c2 = st.columns(2)
+
+        # Baseline economics for export
+        export_econ = FlowsheetSolver.compile_flowsheet_economics(
+            units_list=units_obj_list,
+            streams_list=list(streams_obj_map.values()),
+            species_map=mapped_sp
+        ) if len(units_obj_list) > 0 else None
+
+        with rep_c1:
+            st.write("###### 📦 Flowsheet Model JSON Data Package")
+            st.write("Complete state package containing units, stream tables, compositions, and economics.")
+            json_export = ReportGenerator.export_flowsheet_json(
+                units_map=units_obj_map,
+                streams_map=streams_obj_map,
+                connections=st.session_state.fs_connections,
+                boundaries=st.session_state.fs_boundaries,
+                econ_results=export_econ
+            )
+            st.download_button(
+                label="📥 Download Flowsheet JSON Model",
+                data=json_export,
+                file_name="flowsheet_model_data.json",
+                mime="application/json",
+                use_container_width=True
+            )
+
+        with rep_c2:
+            st.write("###### 📑 Turton & Guthrie Engineering Data Sheet")
+            st.write("Printable HTML engineering report with mass/energy stream schedules and CAPEX/OPEX.")
+            html_export = ReportGenerator.generate_engineering_report_html(
+                units_map=units_obj_map,
+                streams_map=streams_obj_map,
+                connections=st.session_state.fs_connections,
+                econ_results=export_econ,
+                project_title="Process Engineering Design & Economic Evaluation Report"
+            )
+            st.download_button(
+                label="📄 Download Engineering Data Sheet (HTML)",
+                data=html_export,
+                file_name="engineering_datasheet.html",
+                mime="text/html",
+                use_container_width=True
+            )
 
 

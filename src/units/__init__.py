@@ -10,3 +10,5 @@ from src.units.compressor import Compressor, Expander
 from src.units.columns import AbsorptionColumn
 from src.units.valves import ControlValve
 from src.units.pump import FlowsheetPump
+from src.units.dynamic_column import DynamicDistillationColumn
+
