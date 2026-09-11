@@ -183,6 +183,21 @@ class SVGFlowsheet:
             svg.append(f'<line x1="{x+15}" y1="{y+h-20}" x2="{x+w-15}" y2="{y+h-20}" stroke="#c026d3" stroke-width="3" />')
             svg.append(f'<text x="{x + w/2}" y="{y + h/2 - 5}" font-family="Inter, sans-serif" font-size="9" font-weight="bold" fill="#701a75" text-anchor="middle">{eq_id}</text>')
 
+        elif eq_type in ["ContinuousCrystallizer", "Crystallizer", "MSMPR"]:
+            w, h = 60, 90
+            points = f"{x} {y}, {x+w} {y}, {x+w} {y+h*0.7}, {x+w*0.5} {y+h}, {x} {y+h*0.7}"
+            svg.append(f'<polygon points="{points}" fill="#eff6ff" stroke="#2563eb" stroke-width="2" />')
+            svg.append(f'<rect x="{x+w*0.3}" y="{y+15}" width="{w*0.4}" height="{h*0.45}" fill="none" stroke="#2563eb" stroke-dasharray="2 2" stroke-width="1.5" />')
+            svg.append(f'<line x1="{x+w*0.5}" y1="{y-5}" x2="{x+w*0.5}" y2="{y+h*0.65}" stroke="#1d4ed8" stroke-width="2" />')
+            svg.append(f'<text x="{x + w/2}" y="{y + h*0.35}" font-family="Inter, sans-serif" font-size="8" font-weight="bold" fill="#1e40af" text-anchor="middle">❄️ {eq_id}</text>')
+
+        elif eq_type in ["SprayDryer", "Dryer"]:
+            w, h = 65, 100
+            points = f"{x} {y+15}, {x+w} {y+15}, {x+w} {y+h*0.65}, {x+w*0.5} {y+h}, {x} {y+h*0.65}"
+            svg.append(f'<polygon points="{points}" fill="#fffbeb" stroke="#b45309" stroke-width="2" />')
+            svg.append(f'<polygon points="{x+w*0.5-8} {y}, {x+w*0.5+8} {y}, {x+w*0.5} {y+15}" fill="#f59e0b" stroke="#b45309" stroke-width="1" />')
+            svg.append(f'<text x="{x + w/2}" y="{y + h*0.40}" font-family="Inter, sans-serif" font-size="8" font-weight="bold" fill="#92400e" text-anchor="middle">💨 {eq_id}</text>')
+
         else:  # Feed / Product Boundaries
             w, h = 100, 40
             svg.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="5" fill="#f8fafc" stroke="#64748b" stroke-width="1.5" stroke-dasharray="3 3" />')

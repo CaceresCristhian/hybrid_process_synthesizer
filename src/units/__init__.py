@@ -11,4 +11,5 @@ from src.units.columns import AbsorptionColumn
 from src.units.valves import ControlValve
 from src.units.pump import FlowsheetPump
 from src.units.dynamic_column import DynamicDistillationColumn
+from src.units.solids import ContinuousCrystallizer, SprayDryer
 

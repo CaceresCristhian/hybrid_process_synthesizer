@@ -44,6 +44,9 @@ from src.reporting.report_generator import ReportGenerator
 from src.economics.pinch_analysis import PinchAnalyzer, ThermalStream
 from src.safety import ReliefValveSizer, HAZOPAnalyzer, API_ORIFICE_SIZES
 from src.optimization import SeparationSequencer, SequenceCandidate, ParetoOptimizer
+from src.chemical_phenomena.unifac import UNIFACModel, SUBGROUPS, SPECIES_FRAGMENTS
+from src.chemical_phenomena.pc_saft import PCSAFTModel, PCSAFT_DATABASE
+from src.units.solids import ContinuousCrystallizer, SprayDryer
 
 # Force Streamlit to reload modified submodules to prevent caching errors on Streamlit Cloud
 import importlib
@@ -78,6 +81,9 @@ import src.safety.relief_sizing
 import src.safety.hazop_analyzer
 import src.optimization.sequence_synthesizer
 import src.optimization.pareto_optimizer
+import src.chemical_phenomena.unifac
+import src.chemical_phenomena.pc_saft
+import src.units.solids
 importlib.reload(src.database.loader)
 importlib.reload(src.visualization.svg_flowsheet)
 importlib.reload(src.visualization.pid_layout)
@@ -109,6 +115,9 @@ importlib.reload(src.safety.relief_sizing)
 importlib.reload(src.safety.hazop_analyzer)
 importlib.reload(src.optimization.sequence_synthesizer)
 importlib.reload(src.optimization.pareto_optimizer)
+importlib.reload(src.chemical_phenomena.unifac)
+importlib.reload(src.chemical_phenomena.pc_saft)
+importlib.reload(src.units.solids)
 
 # Page Config
 st.set_page_config(
@@ -970,7 +979,7 @@ elif simulation_mode == "Interactive Flowsheet Designer":
             "Pump", "Compressor", "Expander", "ControlValve", 
             "Heater", "Cooler", "HeatExchanger", 
             "FlashDrum", "Splitter", "SolidLiquidSeparator", "MembraneUnit", 
-            "AbsorptionColumn", "DistillationColumn", "DynamicDistillationColumn", "Bioreactor", "CSTR", "PFR", "EquilibriumReactor", "Mixer"
+            "AbsorptionColumn", "DistillationColumn", "DynamicDistillationColumn", "Bioreactor", "CSTR", "PFR", "EquilibriumReactor", "Mixer", "ContinuousCrystallizer", "SprayDryer"
         ]
     )
     add_material = st.sidebar.selectbox("Material of Construction", ["Carbon Steel", "Stainless Steel 316", "Titanium", "Hastelloy C-276", "Monel"])
@@ -1128,6 +1137,10 @@ elif simulation_mode == "Interactive Flowsheet Designer":
             unit_obj = DynamicDistillationColumn(uid, uid, num_stages=12, feed_stage=6, reflux_ratio=2.5)
         elif utype == "Mixer":
             unit_obj = FlowsheetMixer(uid, uid)
+        elif utype == "ContinuousCrystallizer":
+            unit_obj = ContinuousCrystallizer(uid, uid, cryst_volume_m3=udata.get("volume", 8.0))
+        elif utype == "SprayDryer":
+            unit_obj = SprayDryer(uid, uid, inlet_gas_temp_c=udata.get("t_target", 190.0))
         else:
             unit_obj = FlowsheetPump(uid, uid)
 
@@ -1316,7 +1329,7 @@ elif simulation_mode == "Interactive Flowsheet Designer":
     mapped_sp = {sp.id: sp for sp in [species_map[k] for k in st.session_state.fs_species]}
 
     # RENDER INTERACTIVE TABS
-    tab_pid, tab_mass, tab_energy, tab_vle, tab_econ, tab_dynamic, tab_pinch, tab_lca, tab_safety, tab_opt = st.tabs([
+    tab_pid, tab_mass, tab_energy, tab_vle, tab_econ, tab_dynamic, tab_pinch, tab_lca, tab_safety, tab_opt, tab_solids = st.tabs([
         "Flowsheet Canvas & P&ID", 
         "Mass Balance Summary", 
         "Energy Balance Summary", 
@@ -1326,7 +1339,8 @@ elif simulation_mode == "Interactive Flowsheet Designer":
         "Pinch Energy Integration & Heat Recovery",
         "Environmental LCA & Decarbonization Studio",
         "Process Safety & HAZOP Engineering",
-        "Superstructure Synthesis & Pareto Optimization"
+        "Superstructure Synthesis & Pareto Optimization",
+        "Advanced Thermodynamics & Solids Processing"
     ])
     
     with tab_pid:
@@ -3118,3 +3132,530 @@ elif simulation_mode == "Interactive Flowsheet Designer":
             mime="text/csv",
             use_container_width=False
         )
+
+    with tab_solids:
+        st.write("### ⚛️ Advanced Thermodynamic Equations of State & Solids Processing")
+        st.markdown("""
+            *Predict non-ideal phase equilibria with UNIFAC functional group contribution without experimental parameters, explore high-pressure associating fluids with PC-SAFT, model continuous MSMPR crystallization Population Balance Models (PBM), and simulate industrial convective spray dryers with psychrometric drying balances.*
+        """)
+
+        # Submodule selector
+        solids_mode = st.radio(
+            "Solids & Thermodynamics Sub-Module",
+            [
+                "🔬 Predictive UNIFAC Group Contribution",
+                "⚛️ PC-SAFT Molecular Associating EOS",
+                "❄️ Continuous MSMPR Crystallizer (PBM)",
+                "💨 Industrial Convective Spray Dryer",
+                "🏭 Flowsheet Solids Processing Summary"
+            ],
+            horizontal=True,
+            key="solids_submodule_selector"
+        )
+
+        st.markdown("---")
+
+        # =========================================================================
+        # SUB-MODULE 1: UNIFAC GROUP CONTRIBUTION
+        # =========================================================================
+        if solids_mode == "🔬 Predictive UNIFAC Group Contribution":
+            st.write("#### 🔬 Predictive UNIFAC Group Contribution Activity Model")
+            st.markdown(r"""
+                The **UNIFAC method** (Fredenslund et al., 1975) estimates liquid activity coefficients $\gamma_i = \gamma_i^C \cdot \gamma_i^R$
+                strictly from molecular structure decomposition into standard functional groups (e.g. $-\text{CH}_3, -\text{CH}_2-, -\text{OH}, -\text{COOH}, \text{H}_2\text{O}$),
+                enabling phase equilibrium predictions for novel compounds without experimental binary interaction parameters.
+            """)
+
+            u_col1, u_col2, u_col3 = st.columns(3)
+            with u_col1:
+                binary_pairs = [
+                    "Ethanol / Benzene (Minimum-Boiling Azeotrope)",
+                    "Ethanol / Water (Industrial Fermentation Broth)",
+                    "Acetone / Methanol (Polar Solvent System)",
+                    "Octane / Benzene (Petrochemical Hydrocarbons)",
+                    "Acetic Acid / Water (Carboxylic Acid Mixture)"
+                ]
+                sel_pair = st.selectbox("Binary Mixture Selection", binary_pairs, key="unifac_pair_sel")
+            with u_col2:
+                unifac_p_bar = st.slider("System Pressure (bar)", 0.2, 5.0, 1.013, 0.05, key="unifac_p_bar")
+            with u_col3:
+                unifac_temp_k = st.slider("Evaluation Temperature (K)", 280.0, 420.0, 340.0, 5.0, key="unifac_temp_k")
+
+            # Parse components
+            pair_map = {
+                "Ethanol / Benzene (Minimum-Boiling Azeotrope)": ("ethanol", "benzene"),
+                "Ethanol / Water (Industrial Fermentation Broth)": ("ethanol", "water"),
+                "Acetone / Methanol (Polar Solvent System)": ("acetone", "methanol"),
+                "Octane / Benzene (Petrochemical Hydrocarbons)": ("octane", "benzene"),
+                "Acetic Acid / Water (Carboxylic Acid Mixture)": ("acetic_acid", "water")
+            }
+            c1_name, c2_name = pair_map[sel_pair]
+
+            # Generate UNIFAC VLE Diagram
+            vle_data = UNIFACModel.generate_vle_diagram(c1_name, c2_name, P_pa=unifac_p_bar * 1e5, num_points=41)
+
+            # Equimolar evaluation
+            res_equi = UNIFACModel.calculate_gammas({c1_name: 0.5, c2_name: 0.5}, temperature_k=unifac_temp_k)
+            g1_equi = res_equi["gammas"][c1_name]
+            g2_equi = res_equi["gammas"][c2_name]
+
+            # Infinite dilution
+            res_inf1 = UNIFACModel.calculate_gammas({c1_name: 0.001, c2_name: 0.999}, temperature_k=unifac_temp_k)
+            res_inf2 = UNIFACModel.calculate_gammas({c1_name: 0.999, c2_name: 0.001}, temperature_k=unifac_temp_k)
+            g1_inf = res_inf1["gammas"][c1_name]
+            g2_inf = res_inf2["gammas"][c2_name]
+
+            # 5 Metric Cards
+            st.write("##### 📊 UNIFAC Activity Coefficient Metrics")
+            uk1, uk2, uk3, uk4, uk5 = st.columns(5)
+            with uk1:
+                st.metric(f"γ∞ ({c1_name.capitalize()})", f"{g1_inf:.3f}", help="Activity coefficient at infinite dilution in second component")
+            with uk2:
+                st.metric(f"γ∞ ({c2_name.capitalize()})", f"{g2_inf:.3f}", help="Activity coefficient at infinite dilution in first component")
+            with uk3:
+                st.metric(f"Equimolar γ1 (x=0.5)", f"{g1_equi:.3f}", help=f"Combinatorial ln(γC)={res_equi['ln_gamma_c'][c1_name]:.3f}, Residual ln(γR)={res_equi['ln_gamma_r'][c1_name]:.3f}")
+            with uk4:
+                st.metric(f"Equimolar γ2 (x=0.5)", f"{g2_equi:.3f}", help=f"Combinatorial ln(γC)={res_equi['ln_gamma_c'][c2_name]:.3f}, Residual ln(γR)={res_equi['ln_gamma_r'][c2_name]:.3f}")
+            with uk5:
+                az_str = f"x1={vle_data['azeotrope_x']:.3f}, T={vle_data['azeotrope_t_c']:.1f}°C" if vle_data["azeotrope_found"] else "None Detected"
+                st.metric("Azeotrope Point", az_str, help="Predicted homogeneous azeotropic point")
+
+            # 2 Interactive Plotly Charts
+            uc_col1, uc_col2 = st.columns(2)
+            with uc_col1:
+                fig_vle = go.Figure()
+                fig_vle.add_trace(go.Scatter(
+                    x=vle_data["x1"], y=vle_data["T_C"],
+                    mode="lines", name="Bubble Point (Liquid x1)",
+                    line=dict(color="#2563eb", width=3)
+                ))
+                fig_vle.add_trace(go.Scatter(
+                    x=vle_data["y1"], y=vle_data["T_C"],
+                    mode="lines", name="Dew Point (Vapor y1)",
+                    line=dict(color="#dc2626", width=3, dash="dash")
+                ))
+                if vle_data["azeotrope_found"]:
+                    fig_vle.add_trace(go.Scatter(
+                        x=[vle_data["azeotrope_x"]], y=[vle_data["azeotrope_t_c"]],
+                        mode="markers+text", name="Predicted Azeotrope",
+                        text=[f"Azeotrope ({vle_data['azeotrope_x']:.2f}, {vle_data['azeotrope_t_c']:.1f}°C)"],
+                        textposition="top center",
+                        marker=dict(size=14, color="#10b981", symbol="diamond")
+                    ))
+                fig_vle.update_layout(
+                    title=f"<b>UNIFAC Isobaric T-x-y Phase Envelope @ {unifac_p_bar:.2f} bar</b>",
+                    xaxis_title=f"Mole Fraction {c1_name.capitalize()} (x1, y1)",
+                    yaxis_title="Temperature (°C)",
+                    height=420,
+                    margin=dict(l=20, r=20, t=50, b=20)
+                )
+                st.plotly_chart(fig_vle, use_container_width=True)
+
+            with uc_col2:
+                fig_gamma = go.Figure()
+                fig_gamma.add_trace(go.Scatter(
+                    x=vle_data["x1"], y=vle_data["gamma1"],
+                    mode="lines", name=f"γ ({c1_name.capitalize()})",
+                    line=dict(color="#8b5cf6", width=3)
+                ))
+                fig_gamma.add_trace(go.Scatter(
+                    x=vle_data["x1"], y=vle_data["gamma2"],
+                    mode="lines", name=f"γ ({c2_name.capitalize()})",
+                    line=dict(color="#f59e0b", width=3)
+                ))
+                fig_gamma.add_hline(y=1.0, line_dash="dot", line_color="gray", annotation_text="Ideal Solution (γ=1)")
+                fig_gamma.update_layout(
+                    title="<b>Activity Coefficients γ_i vs Liquid Composition x1</b>",
+                    xaxis_title=f"Mole Fraction {c1_name.capitalize()} (x1)",
+                    yaxis_title="Activity Coefficient γ_i",
+                    height=420,
+                    margin=dict(l=20, r=20, t=50, b=20)
+                )
+                st.plotly_chart(fig_gamma, use_container_width=True)
+
+            # Functional Group Fragmentation Breakdown
+            with st.expander(f"🧩 View UNIFAC Functional Group Decomposition for {c1_name.capitalize()} & {c2_name.capitalize()}"):
+                frag1 = UNIFACModel.get_species_groups(c1_name)
+                frag2 = UNIFACModel.get_species_groups(c2_name)
+                df_frag = []
+                for sp_lbl, fdict in [(c1_name.capitalize(), frag1), (c2_name.capitalize(), frag2)]:
+                    for grp, cnt in fdict.items():
+                        ginfo = SUBGROUPS.get(grp, {"R": 1.0, "Q": 1.0, "main": 1, "name": grp})
+                        df_frag.append({
+                            "Molecule": sp_lbl,
+                            "Subgroup": grp,
+                            "Description": ginfo.get("name", grp),
+                            "Count (v_k)": cnt,
+                            "Volume Param (R_k)": ginfo["R"],
+                            "Surface Param (Q_k)": ginfo["Q"],
+                            "Main Group ID": ginfo["main"]
+                        })
+                st.dataframe(df_frag, use_container_width=True)
+
+        # =========================================================================
+        # SUB-MODULE 2: PC-SAFT EQUATION OF STATE
+        # =========================================================================
+        elif solids_mode == "⚛️ PC-SAFT Molecular Associating EOS":
+            st.write("#### ⚛️ Perturbed-Chain Statistical Associating Fluid Theory (PC-SAFT)")
+            st.markdown("""
+                The **PC-SAFT Equation of State** (Gross & Sadowski, 2001) models molecules as chains of spherical segments interacting via hard-chain repulsion, 
+                dispersion attractive interactions, and directional hydrogen-bonding association (Wertheim 2B site theory):
+                $$Z = 1 + Z^{\text{hc}} + Z^{\text{disp}} + Z^{\text{assoc}}$$
+                It accurately predicts densities, supercritical fluid isotherms, and polymer/associating solution phase equilibria up to 1000 bar.
+            """)
+
+            pc_col1, pc_col2, pc_col3 = st.columns(3)
+            with pc_col1:
+                saft_species_list = list(PCSAFT_DATABASE.keys())
+                sel_saft_sp = st.selectbox("Fluid Molecule", saft_species_list, index=saft_species_list.index("water") if "water" in saft_species_list else 0, key="saft_sp_sel")
+            with pc_col2:
+                saft_temp_eval = st.slider("Target Evaluation Temp (K)", 250.0, 550.0, 350.0, 10.0, key="saft_t_eval")
+            with pc_col3:
+                saft_rho_eval = st.slider("Evaluation Density (mol/m³)", 100.0, 60000.0, 45000.0, 500.0, key="saft_rho_eval")
+
+            params = PCSAFTModel.get_parameters(sel_saft_sp)
+            point_calc = PCSAFTModel.calculate_compressibility(sel_saft_sp, saft_rho_eval, saft_temp_eval)
+
+            # 5 Metric Cards
+            st.write("##### 📊 Molecular Parameters & State Compressibility")
+            pk1, pk2, pk3, pk4, pk5 = st.columns(5)
+            with pk1:
+                st.metric("Segments (m)", f"{params.m:.4f}", help="Number of spherical segments per molecule")
+            with pk2:
+                st.metric("Segment Diam (σ)", f"{params.sigma:.3f} Å", help="Hard-core segment diameter")
+            with pk3:
+                st.metric("Dispersion (ε/k)", f"{params.eps_k:.1f} K", help="Depth of square-well attractive potential")
+            with pk4:
+                assoc_lbl = f"{params.eps_assoc_k:.0f} K" if params.eps_assoc_k > 0 else "0 (Non-polar)"
+                st.metric("Association (εAB/k)", assoc_lbl, help="Hydrogen-bonding association energy")
+            with pk5:
+                st.metric("Compressibility Z", f"{point_calc['Z']:.3f}", help=f"Z_hc={point_calc['Z_hc']:.2f}, Z_disp={point_calc['Z_disp']:.2f}, Z_assoc={point_calc['Z_assoc']:.2f}")
+
+            # Plotly Isotherms & Compressibility Breakdown
+            isotherm_data = PCSAFTModel.generate_isotherms(sel_saft_sp, [298.15, 350.0, 420.0, 520.0], num_points=40)
+
+            pc_c1, pc_c2 = st.columns(2)
+            with pc_c1:
+                fig_iso = go.Figure()
+                densities = isotherm_data["molar_densities_mol_m3"]
+                colors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444"]
+                for (t_lbl, t_dict), col in zip(isotherm_data["isotherms"].items(), colors):
+                    p_capped = [max(0.01, min(1000.0, p)) for p in t_dict["P_bar"]]
+                    fig_iso.add_trace(go.Scatter(
+                        x=densities, y=p_capped,
+                        mode="lines", name=f"T = {t_dict['temperature_K']:.0f} K",
+                        line=dict(color=col, width=2.5)
+                    ))
+                fig_iso.update_layout(
+                    title=f"<b>PC-SAFT Fluid Isotherms for {params.name}</b>",
+                    xaxis_title="Molar Density (mol/m³)",
+                    yaxis_title="Pressure (bar)",
+                    yaxis_type="log",
+                    xaxis_type="log",
+                    height=420,
+                    margin=dict(l=20, r=20, t=50, b=20)
+                )
+                st.plotly_chart(fig_iso, use_container_width=True)
+
+            with pc_c2:
+                # Density scan of compressibility components
+                dens_scan = np.geomspace(50.0, min(55000.0, 1.2 * saft_rho_eval), 35)
+                z_hc_list = []
+                z_disp_list = []
+                z_assoc_list = []
+                z_tot_list = []
+                for r in dens_scan:
+                    res_pt = PCSAFTModel.calculate_compressibility(sel_saft_sp, r, saft_temp_eval)
+                    z_hc_list.append(res_pt["Z_hc"])
+                    z_disp_list.append(res_pt["Z_disp"])
+                    z_assoc_list.append(res_pt["Z_assoc"])
+                    z_tot_list.append(res_pt["Z"])
+
+                fig_z = go.Figure()
+                fig_z.add_trace(go.Scatter(x=dens_scan, y=z_tot_list, mode="lines", name="Total Z", line=dict(color="#1f2937", width=3)))
+                fig_z.add_trace(go.Scatter(x=dens_scan, y=z_hc_list, mode="lines", name="Hard-Chain Z_hc", line=dict(color="#3b82f6", width=2, dash="dash")))
+                fig_z.add_trace(go.Scatter(x=dens_scan, y=z_disp_list, mode="lines", name="Dispersion Z_disp", line=dict(color="#ef4444", width=2, dash="dash")))
+                if params.eps_assoc_k > 0:
+                    fig_z.add_trace(go.Scatter(x=dens_scan, y=z_assoc_list, mode="lines", name="Association Z_assoc", line=dict(color="#10b981", width=2, dash="dot")))
+
+                fig_z.update_layout(
+                    title=f"<b>Compressibility Factor Contributions @ {saft_temp_eval:.0f} K</b>",
+                    xaxis_title="Molar Density (mol/m³)",
+                    yaxis_title="Dimensionless Contribution",
+                    height=420,
+                    margin=dict(l=20, r=20, t=50, b=20)
+                )
+                st.plotly_chart(fig_z, use_container_width=True)
+
+        # =========================================================================
+        # SUB-MODULE 3: MSMPR CRYSTALLIZER PBM
+        # =========================================================================
+        elif solids_mode == "❄️ Continuous MSMPR Crystallizer (PBM)":
+            st.write("#### ❄️ Continuous MSMPR Crystallizer with Population Balance Modeling")
+            st.markdown(r"""
+                Continuous **Mixed-Suspension Mixed-Product Removal (MSMPR)** crystallizers are modeled via 1D Population Balance Modeling (Randolph & Larson):
+                $$n(L) = n_0 \exp\left(-\frac{L}{G \tau}\right), \quad m_j = \int_0^\infty L^j n(L) dL = j! \, n_0 (G\tau)^{j+1}$$
+                This calculates crystal nucleation $B_0$, linear growth $G$, magma density $M_T = \rho_c k_v m_3$, crystal production rate, and discrete Particle Size Distribution (PSD).
+            """)
+
+            cr_c1, cr_c2, cr_c3, cr_c4 = st.columns(4)
+            with cr_c1:
+                cr_vol_m3 = st.slider("Crystallizer Volume (m³)", 1.0, 50.0, 10.0, 1.0, key="cr_vol_m3")
+            with cr_c2:
+                cr_feed_f = st.slider("Solution Feed Rate (mol/s)", 5.0, 150.0, 40.0, 5.0, key="cr_feed_f")
+            with cr_c3:
+                cr_growth_rate = st.slider("Crystal Growth Rate G (μm/s)", 0.01, 0.20, 0.06, 0.005, key="cr_growth")
+            with cr_c4:
+                cr_nucl_rate = st.slider("Nucleation Rate B0 (x10⁶ #/m³s)", 0.2, 10.0, 2.0, 0.2, key="cr_nucl") * 1e6
+
+            # Instantiate and simulate crystallizer
+            demo_cryst = ContinuousCrystallizer(
+                "CR-DEMO", "Industrial MSMPR Crystallizer",
+                cryst_volume_m3=cr_vol_m3,
+                growth_k=cr_growth_rate,
+                nucleation_k=cr_nucl_rate
+            )
+            demo_feed = MaterialStream("Demo-Feed")
+            demo_feed.T = 325.15
+            demo_feed.P = 101325.0
+            demo_feed.F = cr_feed_f
+            demo_feed.z = {"water": 0.65, "sucrose": 0.35}
+            demo_feed.MW = 0.120
+            demo_cryst.connect_inlet(demo_feed)
+
+            cryst_pbm = demo_cryst.run_simulation((0, 1), [0])
+            cryst_size = demo_cryst.size_equipment()
+
+            # 5 KPI Metric Cards
+            st.write("##### 📊 Crystallizer PBM Performance Metrics")
+            ck1, ck2, ck3, ck4, ck5 = st.columns(5)
+            with ck1:
+                st.metric("Residence Time (τ)", f"{cryst_pbm['residence_time_min']:.1f} min", help="Mean liquid & crystal slurry residence time")
+            with ck2:
+                st.metric("Magma Density (MT)", f"{cryst_pbm['magma_density_kg_m3']:.1f} kg/m³", help="Suspended crystal mass per unit slurry volume")
+            with ck3:
+                st.metric("Solids Production", f"{cryst_pbm['solids_production_kg_h']:,.0f} kg/h", help="Steady-state crystal discharge production rate")
+            with ck4:
+                st.metric("Mean Size (L_43)", f"{cryst_pbm['L_43_um']:.1f} μm", help=f"Volume-weighted mean diameter (4*G*tau). G*tau = {cryst_pbm['G_tau_um']:.1f} μm")
+            with ck5:
+                st.metric("Fines Cutoff (L_10)", f"{cryst_pbm['L_10_um']:.1f} μm", help=f"10% cumulative passing size. CV = {cryst_pbm['CV_pct']:.0f}%")
+
+            # 2 Plotly Charts: Population Density Log Plot & CSD Histogram
+            cp_col1, cp_col2 = st.columns(2)
+            with cp_col1:
+                # Log population density n(L) = n0 * exp(-L / Gtau)
+                gt = cryst_pbm["G_tau_um"]
+                n0 = cryst_pbm["nuclei_density_n0"]
+                l_points = np.linspace(1.0, max(800.0, 4.0 * gt), 50)
+                n_points = n0 * np.exp(-l_points / gt)
+
+                fig_pbm_log = go.Figure()
+                fig_pbm_log.add_trace(go.Scatter(
+                    x=l_points, y=n_points,
+                    mode="lines", name="Population Density n(L)",
+                    line=dict(color="#2563eb", width=3)
+                ))
+                fig_pbm_log.update_layout(
+                    title="<b>Population Density ln(n) vs Characteristic Size L</b>",
+                    xaxis_title="Crystal Characteristic Dimension L (μm)",
+                    yaxis_title="Population Density n(L) (# / μm·m³)",
+                    yaxis_type="log",
+                    height=420,
+                    margin=dict(l=20, r=20, t=50, b=20)
+                )
+                st.plotly_chart(fig_pbm_log, use_container_width=True)
+
+            with cp_col2:
+                # Volume size distribution histogram
+                fig_csd = go.Figure()
+                fig_csd.add_trace(go.Bar(
+                    x=cryst_pbm["psd_size_bins_um"],
+                    y=cryst_pbm["psd_volume_density"],
+                    name="Volume Density (q3)",
+                    marker_color="#059669"
+                ))
+                fig_csd.add_vline(x=cryst_pbm["L_43_um"], line_dash="dash", line_color="#dc2626", annotation_text=f"L43={cryst_pbm['L_43_um']:.0f}μm")
+                fig_csd.update_layout(
+                    title="<b>Particle Size Distribution (PSD) Volume Fraction</b>",
+                    xaxis_title="Crystal Size L (μm)",
+                    yaxis_title="Normalized Volume Fraction",
+                    height=420,
+                    margin=dict(l=20, r=20, t=50, b=20)
+                )
+                st.plotly_chart(fig_csd, use_container_width=True)
+
+            # Equipment Sizing Card
+            st.write("##### 📐 MSMPR Crystallizer Mechanical Sizing Specification")
+            sz_c1, sz_c2, sz_c3, sz_c4, sz_c5 = st.columns(5)
+            sz_c1.metric("Vessel Diameter", f"{cryst_size['vessel_diameter_m']:.2f} m")
+            sz_c2.metric("Vessel Height (60° Cone)", f"{cryst_size['vessel_height_m']:.2f} m")
+            sz_c3.metric("Operating Volume", f"{cryst_size['vessel_volume_m3']:.1f} m³")
+            sz_c4.metric("Agitator Drive", f"{cryst_size['agitator_power_kW']:.1f} kW")
+            sz_c5.metric("Heat Transfer Area", f"{cryst_size['heat_transfer_area_m2']:.1f} m²")
+
+        # =========================================================================
+        # SUB-MODULE 4: CONVECTIVE SPRAY DRYER
+        # =========================================================================
+        elif solids_mode == "💨 Industrial Convective Spray Dryer":
+            st.write("#### 💨 Industrial Convective Spray Dryer & Cyclone Separator")
+            st.markdown("""
+                Simulates industrial co-current spray drying of solutions/slurries using psychrometric gas balances,
+                atomization moisture evaporation, thermal drying efficiency (adiabatic saturation), and high-efficiency cyclone powder recovery.
+            """)
+
+            sd_c1, sd_c2, sd_c3, sd_c4 = st.columns(4)
+            with sd_c1:
+                sd_feed_flow = st.slider("Slurry Feed Flow (kg/h)", 200.0, 5000.0, 1500.0, 100.0, key="sd_feed_flow")
+            with sd_c2:
+                sd_gas_tin = st.slider("Inlet Hot Gas Temp (°C)", 140.0, 260.0, 190.0, 5.0, key="sd_gas_tin")
+            with sd_c3:
+                sd_target_moist = st.slider("Product Target Moisture (% w/w)", 1.0, 8.0, 3.5, 0.5, key="sd_target_moist")
+            with sd_c4:
+                sd_cyclone_eff = st.slider("Cyclone Recovery Efficiency (%)", 90.0, 99.8, 98.5, 0.1, key="sd_cyclone_eff")
+
+            # Instantiate and simulate spray dryer
+            demo_dryer = SprayDryer(
+                "SD-DEMO", "Industrial Spray Dryer",
+                inlet_gas_temp_c=sd_gas_tin,
+                outlet_target_moisture_pct=sd_target_moist,
+                cyclone_efficiency_pct=sd_cyclone_eff
+            )
+            dryer_feed = MaterialStream("Slurry-In")
+            dryer_feed.T = 300.15
+            dryer_feed.P = 101325.0
+            dryer_feed.F = sd_feed_flow / (0.060 * 3600.0)
+            dryer_feed.z = {"water": 0.60, "solids": 0.40}
+            dryer_feed.MW = 0.060
+            demo_dryer.connect_inlet(dryer_feed)
+
+            dryer_res = demo_dryer.run_simulation((0, 1), [0])
+            dryer_size = demo_dryer.size_equipment()
+
+            # 5 KPI Metric Cards
+            st.write("##### 📊 Spray Dryer Operating Metrics")
+            dk1, dk2, dk3, dk4, dk5 = st.columns(5)
+            with dk1:
+                st.metric("Water Evaporation", f"{dryer_res['water_evaporated_kg_h']:,.0f} kg/h", help="Rate of water evaporated into drying air stream")
+            with dk2:
+                st.metric("Dry Powder Production", f"{dryer_res['powder_produced_kg_h']:,.0f} kg/h", help=f"Recovered product solids @ {sd_target_moist}% moisture")
+            with dk3:
+                st.metric("Burner Heat Duty", f"{dryer_res['burner_heat_duty_kW']:,.0f} kW", help="Thermal duty to heat ambient air to inlet drying temperature")
+            with dk4:
+                st.metric("Thermal Efficiency", f"{dryer_res['thermal_efficiency_pct']:.1f} %", help=f"Drying air temp drop: {dryer_res['inlet_air_temp_C']:.0f}°C -> {dryer_res['outlet_air_temp_C']:.0f}°C")
+            with dk5:
+                loss_kg_h = dryer_res['feed_rate_kg_h'] * 0.40 - dryer_res['powder_produced_kg_h'] * (1.0 - sd_target_moist/100.0)
+                st.metric("Cyclone Solids Loss", f"{max(0.1, loss_kg_h):.1f} kg/h", help=f"Fines carryover past cyclone ({100.0 - sd_cyclone_eff:.1f}% uncollected)")
+
+            # Plotly Charts: Psychrometric Trajectory & Sizing
+            dc_col1, dc_col2 = st.columns(2)
+            with dc_col1:
+                # Psychrometric state points: Ambient (1) -> Preheated (2) -> Exhaust (3)
+                t_amb = 20.0
+                y_amb = 0.010  # kg water / kg dry air
+                t_in = dryer_res["inlet_air_temp_C"]
+                y_in = y_amb
+                t_out = dryer_res["outlet_air_temp_C"]
+                y_out = dryer_res["exhaust_humidity_kg_kg"]
+
+                fig_psych = go.Figure()
+                # Draw drying path
+                fig_psych.add_trace(go.Scatter(
+                    x=[t_amb, t_in, t_out],
+                    y=[y_amb * 1000.0, y_in * 1000.0, y_out * 1000.0],
+                    mode="lines+markers+text",
+                    name="Drying Air Cycle",
+                    text=["1: Ambient In (20°C)", f"2: Burner Out ({t_in:.0f}°C)", f"3: Chamber Exhaust ({t_out:.0f}°C)"],
+                    textposition=["bottom center", "top center", "top right"],
+                    line=dict(color="#f59e0b", width=3),
+                    marker=dict(size=10, color=["#3b82f6", "#ef4444", "#10b981"])
+                ))
+                fig_psych.update_layout(
+                    title="<b>Psychrometric Air Trajectory (Humidity vs Temperature)</b>",
+                    xaxis_title="Air Dry-Bulb Temperature (°C)",
+                    yaxis_title="Absolute Humidity Y (g water / kg dry air)",
+                    height=420,
+                    margin=dict(l=20, r=20, t=50, b=20)
+                )
+                st.plotly_chart(fig_psych, use_container_width=True)
+
+            with dc_col2:
+                # Mass & Energy balance pie breakdown
+                labels = ["Dry Powder Solids", "Water Evaporated", "Residual Moisture", "Cyclone Losses"]
+                values = [
+                    dryer_res["powder_produced_kg_h"] * (1.0 - sd_target_moist/100.0),
+                    dryer_res["water_evaporated_kg_h"],
+                    dryer_res["powder_produced_kg_h"] * (sd_target_moist/100.0),
+                    max(0.1, loss_kg_h)
+                ]
+                fig_pie = go.Figure(data=[go.Pie(labels=labels, values=values, hole=0.45, marker_colors=["#10b981", "#3b82f6", "#f59e0b", "#ef4444"])])
+                fig_pie.update_layout(
+                    title="<b>Slurry Feed Mass Distribution Breakdown (kg/h)</b>",
+                    height=420,
+                    margin=dict(l=20, r=20, t=50, b=20)
+                )
+                st.plotly_chart(fig_pie, use_container_width=True)
+
+            # Equipment Sizing Card
+            st.write("##### 📐 Spray Dryer Mechanical Sizing Specification")
+            ds_c1, ds_c2, ds_c3, ds_c4, ds_c5 = st.columns(5)
+            ds_c1.metric("Chamber Diameter", f"{dryer_size['chamber_diameter_m']:.2f} m")
+            ds_c2.metric("Chamber Height", f"{dryer_size['chamber_height_m']:.2f} m")
+            ds_c3.metric("Chamber Volume", f"{dryer_size['chamber_volume_m3']:.1f} m³")
+            ds_c4.metric("Cyclone Diameter", f"{dryer_size['cyclone_diameter_m']:.2f} m")
+            ds_c5.metric("Blower Drive", f"{dryer_size['blower_power_kW']:.1f} kW")
+
+        # =========================================================================
+        # SUB-MODULE 5: FLOWSHEET SOLIDS SUMMARY
+        # =========================================================================
+        elif solids_mode == "🏭 Flowsheet Solids Processing Summary":
+            st.write("#### 🏭 Plant-Wide Solids Processing & Advanced Thermodynamics Integration")
+            st.markdown("""
+                Aggregates all solids processing unit operations (`ContinuousCrystallizer`, `SprayDryer`) currently instantiated in your flowsheet canvas,
+                evaluating cumulative crystal production, powder yields, drying energy duties, and particle size distributions.
+            """)
+
+            # Run flowsheet compiler
+            solids_compiled = FlowsheetSolver.compile_flowsheet_solids(units_obj_list, streams_obj_map)
+            cryst_list = solids_compiled["crystallizers"]
+            dryer_list = solids_compiled["dryers"]
+            sum_dict = solids_compiled["summary"]
+
+            # 5 Summary Cards
+            st.write("##### 📊 Plant Solids Inventory Summary")
+            sk1, sk2, sk3, sk4, sk5 = st.columns(5)
+            with sk1:
+                st.metric("Total Crystallizers", solids_compiled["total_crystallizer_units"])
+            with sk2:
+                st.metric("Total Spray Dryers", solids_compiled["total_dryer_units"])
+            with sk3:
+                st.metric("Crystal Production", f"{sum_dict['total_crystal_production_kg_h']:,.1f} kg/h")
+            with sk4:
+                st.metric("Powder Production", f"{sum_dict['total_powder_production_kg_h']:,.1f} kg/h")
+            with sk5:
+                st.metric("Water Evaporation Rate", f"{sum_dict['total_water_evaporated_kg_h']:,.1f} kg/h")
+
+            if cryst_list:
+                st.write("##### ❄️ Active Crystallizer Units Schedule")
+                st.dataframe(cryst_list, use_container_width=True)
+
+            if dryer_list:
+                st.write("##### 💨 Active Spray Dryer Units Schedule")
+                st.dataframe(dryer_list, use_container_width=True)
+
+            if not cryst_list and not dryer_list:
+                st.info("💡 No solids unit operations (`ContinuousCrystallizer`, `SprayDryer`) are currently placed in your flowsheet canvas. Add them from the sidebar or use preset templates to view plant-wide compilation.")
+
+            # CSV Export
+            csv_solids = "Unit ID,Unit Name,Type,Production (kg/h),Key Performance Metric,Heat Duty (kW)\n"
+            for c in cryst_list:
+                csv_solids += f'"{c["unit_id"]}","{c["unit_name"]}",Crystallizer,{c["solids_production_kg_h"]:.1f},L43={c["L_43_um"]:.1f}um,{c["cooling_duty_kW"]:.1f}\n'
+            for d in dryer_list:
+                csv_solids += f'"{d["unit_id"]}","{d["unit_name"]}",SprayDryer,{d["powder_produced_kg_h"]:.1f},ThermalEff={d["thermal_efficiency_pct"]:.1f}%,{d["burner_heat_duty_kW"]:.1f}\n'
+
+            st.download_button(
+                label="📑 Download Solids Processing & Thermo Report (CSV)",
+                data=csv_solids,
+                file_name="solids_processing_report.csv",
+                mime="text/csv",
+                use_container_width=False
+            )

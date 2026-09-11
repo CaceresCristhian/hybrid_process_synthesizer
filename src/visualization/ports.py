@@ -97,6 +97,17 @@ EQUIPMENT_PORTS: Dict[str, List[PortDefinition]] = {
         PortDefinition("inlet", "Valve Inlet", "inlet", 0.0, 0.5, "any"),
         PortDefinition("outlet", "Throttled Outlet", "outlet", 1.0, 0.5, "any")
     ],
+    "ContinuousCrystallizer": [
+        PortDefinition("feed", "Saturated Solution Feed", "inlet", 0.0, 0.40, "liquid"),
+        PortDefinition("overflow", "Mother Liquor Overflow", "outlet", 1.0, 0.25, "liquid"),
+        PortDefinition("slurry", "Crystal Slurry Bottoms", "outlet", 0.5, 1.0, "slurry")
+    ],
+    "SprayDryer": [
+        PortDefinition("feed", "Wet Feed / Slurry", "inlet", 0.5, 0.0, "liquid"),
+        PortDefinition("gas_in", "Hot Drying Gas In", "inlet", 0.0, 0.25, "gas"),
+        PortDefinition("exhaust", "Moist Exhaust Air Out", "outlet", 1.0, 0.35, "gas"),
+        PortDefinition("powder", "Dry Powder Product", "outlet", 0.5, 1.0, "slurry")
+    ],
     "Feed Boundary": [
         PortDefinition("out", "Boundary Feed Source", "outlet", 1.0, 0.5, "any")
     ],
@@ -108,6 +119,8 @@ EQUIPMENT_PORTS: Dict[str, List[PortDefinition]] = {
 # Register DistillationColumn aliases
 EQUIPMENT_PORTS["BinaryDistillationColumn"] = EQUIPMENT_PORTS["DistillationColumn"]
 EQUIPMENT_PORTS["DynamicDistillationColumn"] = EQUIPMENT_PORTS["DistillationColumn"]
+EQUIPMENT_PORTS["Crystallizer"] = EQUIPMENT_PORTS["ContinuousCrystallizer"]
+EQUIPMENT_PORTS["Dryer"] = EQUIPMENT_PORTS["SprayDryer"]
 
 # Standard default dimensions (pixels) for canvas nodes
 DEFAULT_UNIT_DIMENSIONS: Dict[str, Dict[str, int]] = {
@@ -122,6 +135,10 @@ DEFAULT_UNIT_DIMENSIONS: Dict[str, Dict[str, int]] = {
     "EquilibriumReactor": {"width": 85, "height": 95},
     "FlashDrum": {"width": 75, "height": 100},
     "SolidLiquidSeparator": {"width": 85, "height": 95},
+    "ContinuousCrystallizer": {"width": 85, "height": 125},
+    "Crystallizer": {"width": 85, "height": 125},
+    "SprayDryer": {"width": 90, "height": 135},
+    "Dryer": {"width": 90, "height": 135},
     "MembraneUnit": {"width": 100, "height": 60},
     "Splitter": {"width": 70, "height": 80},
     "Mixer": {"width": 70, "height": 80},

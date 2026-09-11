@@ -532,5 +532,91 @@ class FlowsheetSolver:
             }
         }
 
+    @classmethod
+    def compile_flowsheet_solids(cls, units_list: list, streams_list: list = None) -> Dict[str, Any]:
+        """
+        Compiles solids processing unit operations (ContinuousCrystallizer, SprayDryer),
+        evaluating crystal size distributions (PBM), moments, magma density,
+        and psychrometric drying gas balances.
+        """
+        from src.units.solids import ContinuousCrystallizer, SprayDryer
+
+        if isinstance(units_list, dict):
+            units_list = list(units_list.values())
+        if streams_list is not None and isinstance(streams_list, dict):
+            streams_list = list(streams_list.values())
+
+        crystallizer_units = []
+        dryer_units = []
+
+        for u in units_list:
+            u_type = u.__class__.__name__
+            if isinstance(u, ContinuousCrystallizer) or "Crystallizer" in u_type:
+                crystallizer_units.append(u)
+            elif isinstance(u, SprayDryer) or "Dryer" in u_type:
+                dryer_units.append(u)
+
+        # 1. Crystallizer Analysis
+        cryst_data = []
+        total_crystals_kg_h = 0.0
+        for c in crystallizer_units:
+            pbm = getattr(c, "pbm_results", {})
+            if not pbm and hasattr(c, "run_simulation"):
+                pbm = c.run_simulation((0, 1), [0])
+            cryst_data.append({
+                "unit_id": c.unit_id,
+                "unit_name": c.name,
+                "residence_time_min": pbm.get("residence_time_min", 60.0),
+                "growth_rate_um_s": pbm.get("growth_rate_um_s", 0.05),
+                "magma_density_kg_m3": pbm.get("magma_density_kg_m3", 150.0),
+                "solids_production_kg_h": pbm.get("solids_production_kg_h", 500.0),
+                "L_10_um": pbm.get("L_10_um", 180.0),
+                "L_43_um": pbm.get("L_43_um", 720.0),
+                "L_50_um": pbm.get("L_50_um", 660.0),
+                "CV_pct": pbm.get("CV_pct", 100.0),
+                "cooling_duty_kW": pbm.get("cooling_duty_kW", 120.0),
+                "psd_size_bins_um": pbm.get("psd_size_bins_um", []),
+                "psd_volume_density": pbm.get("psd_volume_density", [])
+            })
+            total_crystals_kg_h += pbm.get("solids_production_kg_h", 0.0)
+
+        # 2. Spray Dryer Analysis
+        dryer_data = []
+        total_powder_kg_h = 0.0
+        total_water_evap_kg_h = 0.0
+        for d in dryer_units:
+            d_res = getattr(d, "dryer_results", {})
+            if not d_res and hasattr(d, "run_simulation"):
+                d_res = d.run_simulation((0, 1), [0])
+            dryer_data.append({
+                "unit_id": d.unit_id,
+                "unit_name": d.name,
+                "feed_rate_kg_h": d_res.get("feed_rate_kg_h", 1500.0),
+                "water_evaporated_kg_h": d_res.get("water_evaporated_kg_h", 900.0),
+                "powder_produced_kg_h": d_res.get("powder_produced_kg_h", 580.0),
+                "drying_air_flow_kg_h": d_res.get("drying_air_flow_kg_h", 4000.0),
+                "inlet_air_temp_C": d_res.get("inlet_air_temp_C", 190.0),
+                "outlet_air_temp_C": d_res.get("outlet_air_temp_C", 85.0),
+                "thermal_efficiency_pct": d_res.get("thermal_efficiency_pct", 60.0),
+                "burner_heat_duty_kW": d_res.get("burner_heat_duty_kW", 250.0),
+                "exhaust_humidity_kg_kg": d_res.get("exhaust_humidity_kg_kg", 0.035),
+                "cyclone_recovery_pct": d_res.get("cyclone_recovery_pct", 98.5)
+            })
+            total_powder_kg_h += d_res.get("powder_produced_kg_h", 0.0)
+            total_water_evap_kg_h += d_res.get("water_evaporated_kg_h", 0.0)
+
+        return {
+            "crystallizers": cryst_data,
+            "dryers": dryer_data,
+            "total_crystallizer_units": len(crystallizer_units),
+            "total_dryer_units": len(dryer_units),
+            "summary": {
+                "total_crystal_production_kg_h": round(total_crystals_kg_h, 1),
+                "total_powder_production_kg_h": round(total_powder_kg_h, 1),
+                "total_water_evaporated_kg_h": round(total_water_evap_kg_h, 1)
+            }
+        }
+
+
 
 
