@@ -40,6 +40,7 @@ from src.units.dynamic_column import DynamicDistillationColumn
 from src.control.auto_tuning import AutoTuner
 from src.control.dynamic_engine import DynamicSimulationEngine
 from src.reporting.report_generator import ReportGenerator
+from src.economics.pinch_analysis import PinchAnalyzer, ThermalStream
 
 # Force Streamlit to reload modified submodules to prevent caching errors on Streamlit Cloud
 import importlib
@@ -68,6 +69,7 @@ import src.economics.equipment_costing
 import src.economics.capital_costing
 import src.economics.utility_costing
 import src.economics.profitability
+import src.economics.pinch_analysis
 importlib.reload(src.database.loader)
 importlib.reload(src.visualization.svg_flowsheet)
 importlib.reload(src.visualization.pid_layout)
@@ -93,6 +95,7 @@ importlib.reload(src.economics.equipment_costing)
 importlib.reload(src.economics.capital_costing)
 importlib.reload(src.economics.utility_costing)
 importlib.reload(src.economics.profitability)
+importlib.reload(src.economics.pinch_analysis)
 
 # Page Config
 st.set_page_config(
@@ -1300,13 +1303,14 @@ elif simulation_mode == "Interactive Flowsheet Designer":
     mapped_sp = {sp.id: sp for sp in [species_map[k] for k in st.session_state.fs_species]}
 
     # RENDER INTERACTIVE TABS
-    tab_pid, tab_mass, tab_energy, tab_vle, tab_econ, tab_dynamic = st.tabs([
+    tab_pid, tab_mass, tab_energy, tab_vle, tab_econ, tab_dynamic, tab_pinch = st.tabs([
         "Flowsheet Canvas & P&ID", 
         "Mass Balance Summary", 
         "Energy Balance Summary", 
         "VLE & Reaction Kinetics Explorer",
         "Economics & Capital Costing (Turton/Guthrie)",
-        "Dynamic Control & Real-Time Transients"
+        "Dynamic Control & Real-Time Transients",
+        "Pinch Energy Integration & Heat Recovery"
     ])
     
     with tab_pid:
@@ -2067,4 +2071,271 @@ elif simulation_mode == "Interactive Flowsheet Designer":
                 use_container_width=True
             )
 
+    with tab_pinch:
+        st.write("### 🌡️ Pinch Energy Integration & Thermal Network Optimization")
+        st.markdown(
+            "Synthesize optimal Heat Exchanger Networks (HEN) and determine thermodynamically achievable "
+            "**Maximum Energy Recovery (MER)** utility targets via Bodo Linnhoff\'s Problem Table Algorithm."
+        )
+
+        # 1. Configuration & Source Controls
+        p_c1, p_c2, p_c3, p_c4 = st.columns([3, 2, 2, 2])
+        with p_c1:
+            stream_source = st.selectbox(
+                "Thermal Streams Source",
+                [
+                    "Auto-Extract from Flowsheet Units",
+                    "Linnhoff 4-Stream Classical Benchmark (1982)",
+                    "Aromatics BTX Fractionation Train (5 Streams)"
+                ],
+                index=0,
+                help="Choose between live flowsheet thermal units or classical chemical engineering pinch benchmarks."
+            )
+        with p_c2:
+            dt_min = st.slider(
+                "Pinch Approach ΔT_min (K)",
+                min_value=2.0, max_value=35.0, value=10.0, step=0.5,
+                help="Minimum allowable temperature difference between hot and cold streams."
+            )
+        with p_c3:
+            steam_price = st.number_input(
+                "LP/HP Steam ($/GJ)",
+                min_value=0.5, max_value=50.0, value=4.50, step=0.25,
+                help="Cost of hot utility steam per gigajoule."
+            )
+        with p_c4:
+            cw_price = st.number_input(
+                "Cooling Water ($/GJ)",
+                min_value=0.05, max_value=10.0, value=0.35, step=0.05,
+                help="Cost of cold utility cooling water per gigajoule."
+            )
+
+        # 2. Extract or Load Streams
+        current_streams = []
+        if stream_source == "Auto-Extract from Flowsheet Units":
+            current_streams = PinchAnalyzer.extract_streams_from_flowsheet(units_obj_map, streams_obj_map)
+            if not current_streams:
+                st.info(
+                    "💡 **No thermal duties detected in current flowsheet.**\n\n"
+                    "Add Heaters, Coolers, Heat Exchangers, Distillation Columns, or Flash Drums to the canvas, "
+                    "or select **Linnhoff 4-Stream Classical Benchmark** above to explore the Pinch engine."
+                )
+                if st.button("🧪 Quick-Load Linnhoff 4-Stream Benchmark"):
+                    stream_source = "Linnhoff 4-Stream Classical Benchmark (1982)"
+
+        if stream_source == "Linnhoff 4-Stream Classical Benchmark (1982)":
+            current_streams = [
+                ThermalStream("H1_ReactorEffluent", "HOT", 170.0, 60.0, 330.0, 3.0),
+                ThermalStream("H2_ColumnCondenser", "HOT", 150.0, 30.0, 180.0, 1.5),
+                ThermalStream("C1_ColumnFeed", "COLD", 20.0, 135.0, 230.0, 2.0),
+                ThermalStream("C2_ReboilerBoilup", "COLD", 80.0, 140.0, 240.0, 4.0)
+            ]
+        elif stream_source == "Aromatics BTX Fractionation Train (5 Streams)":
+            current_streams = [
+                ThermalStream("H1_AromaticsResidue", "HOT", 210.0, 110.0, 300.0, 3.0),
+                ThermalStream("H2_ReboilerCondensate", "HOT", 180.0, 80.0, 450.0, 4.5),
+                ThermalStream("H3_TopDistillateVapor", "HOT", 125.0, 65.0, 360.0, 6.0),
+                ThermalStream("C1_FreshNaphthaFeed", "COLD", 25.0, 115.0, 450.0, 5.0),
+                ThermalStream("C2_StripperReboilerPreheat", "COLD", 70.0, 165.0, 380.0, 4.0)
+            ]
+
+        if current_streams:
+            # 3. Solve Pinch Targets
+            pt_res = PinchAnalyzer.solve_problem_table_algorithm(current_streams, delta_T_min=dt_min)
+            cc_res = PinchAnalyzer.generate_composite_curves(current_streams, delta_T_min=dt_min)
+            gcc_res = PinchAnalyzer.generate_grand_composite_curve(current_streams, delta_T_min=dt_min)
+            econ_res = PinchAnalyzer.calculate_utility_savings(
+                current_streams, delta_T_min=dt_min, operating_hours=8000.0,
+                utility_rates={"steam_usd_per_gj": steam_price, "cooling_water_usd_per_gj": cw_price}
+            )
+
+            # 4. Top KPI Cards
+            st.write("##### 🎯 Thermodynamic Targets & Maximum Energy Recovery (MER)")
+            k1, k2, k3, k4, k5 = st.columns(5)
+            k1.metric(
+                "Pinch Temperatures",
+                f"{pt_res['pinch_temperature_hot_C']:.1f} °C / {pt_res['pinch_temperature_cold_C']:.1f} °C",
+                f"Shifted T* = {pt_res['pinch_temperature_shifted_C']:.1f} °C",
+                help="Hot pinch temperature Th and Cold pinch temperature Tc separated by ΔT_min."
+            )
+            k2.metric(
+                "Min Hot Utility (QH,min)",
+                f"{pt_res['Q_hot_utility_min_kW']:.1f} kW",
+                f"Unintegrated: {pt_res['total_cold_duty_kW']:.1f} kW",
+                delta_color="inverse",
+                help="Minimum external heating required above the pinch."
+            )
+            k3.metric(
+                "Min Cold Utility (QC,min)",
+                f"{pt_res['Q_cold_utility_min_kW']:.1f} kW",
+                f"Unintegrated: {pt_res['total_hot_duty_kW']:.1f} kW",
+                delta_color="inverse",
+                help="Minimum external cooling required below the pinch."
+            )
+            k4.metric(
+                "Internal Heat Recovery",
+                f"{pt_res['Q_heat_recovery_max_kW']:.1f} kW",
+                f"{econ_res['energy_reduction_pct']:.1f}% Energy Saved",
+                delta_color="normal",
+                help="Process-to-process heat exchange potential."
+            )
+            k5.metric(
+                "Annual Energy Savings",
+                f"${econ_res['annual_savings_usd']:,.0f} / yr",
+                f"-{econ_res['energy_reduction_pct']:.1f}% Utility OPEX",
+                delta_color="normal",
+                help="Annual OPEX savings achieved by HEN pinch integration."
+            )
+
+            st.write("---")
+
+            # 5. Visual Charts (Composite Curves & Grand Composite Curve)
+            ch_col1, ch_col2 = st.columns(2)
+
+            with ch_col1:
+                # Hot & Cold Composite Curves
+                fig_cc = go.Figure()
+                fig_cc.add_trace(go.Scatter(
+                    x=cc_res["hot_composite"]["enthalpy_kW"],
+                    y=cc_res["hot_composite"]["temperature_C"],
+                    mode="lines+markers",
+                    name="Hot Composite (HCC)",
+                    line=dict(color="#ef4444", width=3),
+                    marker=dict(size=6, color="#b91c1c")
+                ))
+                fig_cc.add_trace(go.Scatter(
+                    x=cc_res["cold_composite"]["enthalpy_kW"],
+                    y=cc_res["cold_composite"]["temperature_C"],
+                    mode="lines+markers",
+                    name="Cold Composite (CCC)",
+                    line=dict(color="#3b82f6", width=3),
+                    marker=dict(size=6, color="#1d4ed8")
+                ))
+                # Add Pinch point annotation
+                t_h_p = pt_res['pinch_temperature_hot_C']
+                t_c_p = pt_res['pinch_temperature_cold_C']
+                fig_cc.add_annotation(
+                    text=f"Pinch: ΔT_min = {dt_min:.1f} K<br>(Th = {t_h_p:.1f}°C, Tc = {t_c_p:.1f}°C)",
+                    xref="paper", yref="paper",
+                    x=0.5, y=0.55,
+                    showarrow=False,
+                    bgcolor="rgba(255,255,255,0.85)",
+                    bordercolor="#10b981",
+                    borderwidth=1.5,
+                    font=dict(size=11, color="#0f172a")
+                )
+                fig_cc.update_layout(
+                    title="<b>Hot and Cold Composite Curves (T-H)</b>",
+                    xaxis_title="Cumulative Enthalpy Flow H (kW)",
+                    yaxis_title="Temperature (°C)",
+                    legend=dict(x=0.02, y=0.98, bgcolor="rgba(255,255,255,0.6)"),
+                    height=380,
+                    margin=dict(l=20, r=20, t=40, b=20)
+                )
+                st.plotly_chart(fig_cc, use_container_width=True)
+
+            with ch_col2:
+                # Grand Composite Curve (GCC)
+                fig_gcc = go.Figure()
+                fig_gcc.add_trace(go.Scatter(
+                    x=gcc_res["cascaded_heat_flow_kW"],
+                    y=gcc_res["shifted_temperature_C"],
+                    mode="lines+markers",
+                    name="Grand Composite Curve (GCC)",
+                    line=dict(color="#8b5cf6", width=3),
+                    marker=dict(size=6, color="#6d28d9"),
+                    fill="tozerox",
+                    fillcolor="rgba(139, 92, 246, 0.12)"
+                ))
+                # Pinch Point on GCC (H = 0, T* = t_star_pinch)
+                fig_gcc.add_trace(go.Scatter(
+                    x=[0.0],
+                    y=[gcc_res["pinch_shifted_temperature_C"]],
+                    mode="markers",
+                    name="Pinch Point (H = 0)",
+                    marker=dict(size=12, color="#10b981", symbol="diamond")
+                ))
+                fig_gcc.add_vline(x=0.0, line_width=1, line_dash="dash", line_color="#94a3b8")
+                fig_gcc.update_layout(
+                    title="<b>Grand Composite Curve (GCC): Shifted T* vs Cascaded Heat</b>",
+                    xaxis_title="Cascaded Heat Flow H_cascade (kW)",
+                    yaxis_title="Interval Shifted Temperature T* (°C)",
+                    legend=dict(x=0.62, y=0.98, bgcolor="rgba(255,255,255,0.6)"),
+                    height=380,
+                    margin=dict(l=20, r=20, t=40, b=20)
+                )
+                st.plotly_chart(fig_gcc, use_container_width=True)
+
+            # 6. Economic Utility Comparison and HEN Synthesis Rules
+            e_col1, e_col2 = st.columns([3, 2])
+
+            with e_col1:
+                st.write("##### 💰 Utility OPEX: Unintegrated vs. Pinch MER ($/yr)")
+                fig_bar = go.Figure()
+                categories = ["Steam Utility (Heating)", "Cooling Water (Cooling)", "Total Annual OPEX"]
+                unint_vals = [
+                    econ_res["unintegrated_steam_duty_kW"] * (3600.0 * 8000.0 / 1e6) * steam_price,
+                    econ_res["unintegrated_cooling_duty_kW"] * (3600.0 * 8000.0 / 1e6) * cw_price,
+                    econ_res["unintegrated_annual_cost_usd"]
+                ]
+                pinch_vals = [
+                    econ_res["pinch_steam_duty_kW"] * (3600.0 * 8000.0 / 1e6) * steam_price,
+                    econ_res["pinch_cooling_duty_kW"] * (3600.0 * 8000.0 / 1e6) * cw_price,
+                    econ_res["pinch_annual_cost_usd"]
+                ]
+                fig_bar.add_trace(go.Bar(
+                    name="Unintegrated Base",
+                    x=categories,
+                    y=unint_vals,
+                    marker_color="#f59e0b",
+                    text=[f"${v:,.0f}" for v in unint_vals],
+                    textposition="auto"
+                ))
+                fig_bar.add_trace(go.Bar(
+                    name="Pinch MER Optimized",
+                    x=categories,
+                    y=pinch_vals,
+                    marker_color="#10b981",
+                    text=[f"${v:,.0f}" for v in pinch_vals],
+                    textposition="auto"
+                ))
+                fig_bar.update_layout(
+                    barmode="group",
+                    yaxis_title="Annual Utility OPEX ($/year)",
+                    height=320,
+                    legend=dict(x=0.65, y=0.98, bgcolor="rgba(255,255,255,0.6)"),
+                    margin=dict(l=20, r=20, t=30, b=20)
+                )
+                st.plotly_chart(fig_bar, use_container_width=True)
+
+            with e_col2:
+                st.write("##### 📐 HEN Synthesis & Euler Exchanger Targets")
+                st.markdown(f"""
+                - **Minimum Number of Exchangers (Euler Target):**
+                  $$\\mathcal{{N}}_{{\\min}} = \\mathcal{{N}}_{{\\text{{streams}}}} + \\mathcal{{N}}_{{\\text{{utilities}}}} - 1 = \\mathbf{{{econ_res['min_number_of_heat_exchangers']}}}$$
+                - **Pinch Decomposition Principle:**
+                  - **Above Pinch:** Net heat sink. $\\sum CP_C \\ge \\sum CP_H$. Never use cold utility!
+                  - **Below Pinch:** Net heat source. $\\sum CP_H \\ge \\sum CP_C$. Never use hot utility!
+                - **Linnhoff Golden Rule:**
+                  > *Do not transfer heat across the pinch.* Any heat $\\alpha$ transferred across the pinch penalizes 
+                  > both heating and cooling utilities by exactly $+\\alpha$ kW.
+                """)
+                st.success(
+                    f"🏆 **MER Potential:** Recovering **{pt_res['Q_heat_recovery_max_kW']:.1f} kW** eliminates "
+                    f"**${econ_res['annual_savings_usd']:,.0f}/year** of recurring utility charges."
+                )
+
+            # 7. Thermal Streams Table
+            st.write("##### 📋 Thermal Process Streams Schedule")
+            streams_table_data = []
+            for s in current_streams:
+                streams_table_data.append({
+                    "Stream Tag": s.stream_id,
+                    "Service Type": "🔴 HOT (Requires Cooling)" if s.stream_type == "HOT" else "🔵 COLD (Requires Heating)",
+                    "Supply Temp T_in (°C)": f"{s.T_supply_C:.1f}",
+                    "Target Temp T_out (°C)": f"{s.T_target_C:.1f}",
+                    "Flow Capacity CP (kW/K)": f"{s.CP_kW_per_K:.3f}",
+                    "Thermal Duty ΔH (kW)": f"{s.heat_duty_kW:.1f}"
+                })
+            st.dataframe(streams_table_data, use_container_width=True)
 

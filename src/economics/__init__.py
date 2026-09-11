@@ -15,6 +15,7 @@ from src.economics.equipment_costing import EquipmentCosting
 from src.economics.capital_costing import CapitalCosting
 from src.economics.utility_costing import UtilityCosting, DEFAULT_UTILITY_RATES
 from src.economics.profitability import EconomicAnalyzer, DEFAULT_CHEMICAL_PRICES_USD_KG
+from src.economics.pinch_analysis import PinchAnalyzer, ThermalStream
 
 __all__ = [
     "CostCorrelations",
@@ -27,5 +28,7 @@ __all__ = [
     "UtilityCosting",
     "DEFAULT_UTILITY_RATES",
     "EconomicAnalyzer",
-    "DEFAULT_CHEMICAL_PRICES_USD_KG"
+    "DEFAULT_CHEMICAL_PRICES_USD_KG",
+    "PinchAnalyzer",
+    "ThermalStream"
 ]

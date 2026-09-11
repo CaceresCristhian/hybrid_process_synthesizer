@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.optimize import fsolve
+from typing import Dict, List, Any, Optional
 
 class FlowsheetSolver:
     """
@@ -302,4 +303,33 @@ class FlowsheetSolver:
             "opex": opex,
             "profitability": profitability
         }
+
+    @classmethod
+    def compile_flowsheet_pinch(cls, units_list: list, streams_list: list,
+                                delta_T_min: float = 10.0,
+                                operating_hours: float = 8000.0,
+                                utility_rates: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+        """
+        Extracts thermal streams from flowsheet and solves Linnhoff Problem Table,
+        Composite Curves, and Utility Savings targets.
+        """
+        from src.economics.pinch_analysis import PinchAnalyzer
+
+        units_map = {getattr(u, "unit_id", str(idx)): u for idx, u in enumerate(units_list)}
+        streams_map = {getattr(s, "stream_id", str(idx)): s for idx, s in enumerate(streams_list)}
+
+        streams = PinchAnalyzer.extract_streams_from_flowsheet(units_map, streams_map)
+        problem_table = PinchAnalyzer.solve_problem_table_algorithm(streams, delta_T_min=delta_T_min)
+        composite_curves = PinchAnalyzer.generate_composite_curves(streams, delta_T_min=delta_T_min)
+        gcc = PinchAnalyzer.generate_grand_composite_curve(streams, delta_T_min=delta_T_min)
+        savings = PinchAnalyzer.calculate_utility_savings(streams, delta_T_min=delta_T_min, operating_hours=operating_hours, utility_rates=utility_rates)
+
+        return {
+            "thermal_streams": streams,
+            "problem_table": problem_table,
+            "composite_curves": composite_curves,
+            "grand_composite_curve": gcc,
+            "savings": savings
+        }
+
 
