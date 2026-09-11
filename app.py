@@ -27,12 +27,16 @@ from src.units.separators import FlashDrum, Splitter, SolidLiquidSeparator, Memb
 from src.units.compressor import Compressor, Expander
 from src.units.columns import AbsorptionColumn
 from src.units.reactors import IdealCSTR, IdealPFR
+from src.visualization.ports import PortRegistry
+from src.visualization.interactive_canvas import InteractiveCanvasStudio
 
 # Force Streamlit to reload modified submodules to prevent caching errors on Streamlit Cloud
 import importlib
 import src.database.loader
 import src.visualization.svg_flowsheet
 import src.visualization.pid_layout
+import src.visualization.ports
+import src.visualization.interactive_canvas
 import src.units.mixer
 import src.units.thermal
 import src.units.separators
@@ -44,6 +48,8 @@ import src.control.flowsheet_solver
 importlib.reload(src.database.loader)
 importlib.reload(src.visualization.svg_flowsheet)
 importlib.reload(src.visualization.pid_layout)
+importlib.reload(src.visualization.ports)
+importlib.reload(src.visualization.interactive_canvas)
 importlib.reload(src.units.mixer)
 importlib.reload(src.units.thermal)
 importlib.reload(src.units.separators)
@@ -718,16 +724,16 @@ elif simulation_mode == "Interactive Flowsheet Designer":
                 "F-101": {"type": "FlashDrum", "thermo": "Peng-Robinson EOS", "variation": ""}
             }
             st.session_state.fs_connections = [
-                {"from": "Feed Boundary", "to": "P-101", "stream": "S-101"},
-                {"from": "P-101", "to": "E-101", "stream": "S-102"},
-                {"from": "E-101", "to": "C-101", "stream": "S-103"},
-                {"from": "C-101", "to": "Product Boundary", "stream": "S-104"},
-                {"from": "C-101", "to": "M-101", "stream": "S-105"},
-                {"from": "Feed Boundary", "to": "M-101", "stream": "S-106"},
-                {"from": "M-101", "to": "R-101", "stream": "S-107"},
-                {"from": "R-101", "to": "F-101", "stream": "S-108"},
-                {"from": "F-101", "to": "Product Boundary", "stream": "S-109"},
-                {"from": "F-101", "to": "Product Boundary", "stream": "S-110"}
+                {"from": "Feed Boundary", "from_port": "out", "to": "P-101", "to_port": "suction", "stream": "S-101"},
+                {"from": "P-101", "from_port": "discharge", "to": "E-101", "to_port": "inlet", "stream": "S-102"},
+                {"from": "E-101", "from_port": "outlet", "to": "C-101", "to_port": "feed", "stream": "S-103"},
+                {"from": "C-101", "from_port": "distillate", "to": "Product Boundary", "to_port": "in", "stream": "S-104"},
+                {"from": "C-101", "from_port": "bottoms", "to": "M-101", "to_port": "in_1", "stream": "S-105"},
+                {"from": "Feed Boundary", "from_port": "out", "to": "M-101", "to_port": "in_2", "stream": "S-106"},
+                {"from": "M-101", "from_port": "mixed_out", "to": "R-101", "to_port": "feed", "stream": "S-107"},
+                {"from": "R-101", "from_port": "product", "to": "F-101", "to_port": "feed", "stream": "S-108"},
+                {"from": "F-101", "from_port": "vapor", "to": "Product Boundary", "to_port": "in", "stream": "S-109"},
+                {"from": "F-101", "from_port": "liquid", "to": "Product Boundary", "to_port": "in", "stream": "S-110"}
             ]
             st.session_state.fs_boundaries = {
                 "S-101": {"T": 298.15, "P": 101325.0, "F": 25.0, "z": {"pentane": 0.25, "hexane": 0.25, "octane": 0.25, "decane": 0.25}},
@@ -747,16 +753,16 @@ elif simulation_mode == "Interactive Flowsheet Designer":
                 "F-101": {"type": "SolidLiquidSeparator", "thermo": "Ideal Gas / Activity model", "variation": ""}
             }
             st.session_state.fs_connections = [
-                {"from": "Feed Boundary", "to": "M-101", "stream": "S-101"},
-                {"from": "Feed Boundary", "to": "M-101", "stream": "S-102"},
-                {"from": "M-101", "to": "H-101", "stream": "S-103"},
-                {"from": "H-101", "to": "S-101", "stream": "S-104"},
-                {"from": "S-101", "to": "Product Boundary", "stream": "S-105"},
-                {"from": "S-101", "to": "E-101", "stream": "S-106"},
-                {"from": "E-101", "to": "R-101", "stream": "S-107"},
-                {"from": "R-101", "to": "F-101", "stream": "S-108"},
-                {"from": "F-101", "to": "Product Boundary", "stream": "S-109"},
-                {"from": "F-101", "to": "Product Boundary", "stream": "S-110"}
+                {"from": "Feed Boundary", "from_port": "out", "to": "M-101", "to_port": "in_1", "stream": "S-101"},
+                {"from": "Feed Boundary", "from_port": "out", "to": "M-101", "to_port": "in_2", "stream": "S-102"},
+                {"from": "M-101", "from_port": "mixed_out", "to": "H-101", "to_port": "inlet", "stream": "S-103"},
+                {"from": "H-101", "from_port": "outlet", "to": "S-101", "to_port": "slurry_in", "stream": "S-104"},
+                {"from": "S-101", "from_port": "solids_out", "to": "Product Boundary", "to_port": "in", "stream": "S-105"},
+                {"from": "S-101", "from_port": "liquid_out", "to": "E-101", "to_port": "inlet", "stream": "S-106"},
+                {"from": "E-101", "from_port": "outlet", "to": "R-101", "to_port": "feed", "stream": "S-107"},
+                {"from": "R-101", "from_port": "product", "to": "F-101", "to_port": "slurry_in", "stream": "S-108"},
+                {"from": "F-101", "from_port": "liquid_out", "to": "Product Boundary", "to_port": "in", "stream": "S-109"},
+                {"from": "F-101", "from_port": "solids_out", "to": "Product Boundary", "to_port": "in", "stream": "S-110"}
             ]
             st.session_state.fs_boundaries = {
                 "S-101": {"T": 295.0, "P": 101325.0, "F": 35.0, "z": {"water": 1.0}},
@@ -777,16 +783,16 @@ elif simulation_mode == "Interactive Flowsheet Designer":
                 "SP-101": {"type": "Splitter", "thermo": "Peng-Robinson EOS", "variation": ""}
             }
             st.session_state.fs_connections = [
-                {"from": "Feed Boundary", "to": "M-101", "stream": "S-101"},
-                {"from": "M-101", "to": "K-101", "stream": "S-102"},
-                {"from": "K-101", "to": "E-101", "stream": "S-103"},
-                {"from": "E-101", "to": "R-101", "stream": "S-104"},
-                {"from": "R-101", "to": "E-102", "stream": "S-105"},
-                {"from": "E-102", "to": "V-101", "stream": "S-106"},
-                {"from": "V-101", "to": "Product Boundary", "stream": "S-107"},
-                {"from": "V-101", "to": "SP-101", "stream": "S-108"},
-                {"from": "SP-101", "to": "Product Boundary", "stream": "S-109"},
-                {"from": "SP-101", "to": "Product Boundary", "stream": "S-110"}
+                {"from": "Feed Boundary", "from_port": "out", "to": "M-101", "to_port": "in_1", "stream": "S-101"},
+                {"from": "M-101", "from_port": "mixed_out", "to": "K-101", "to_port": "suction", "stream": "S-102"},
+                {"from": "K-101", "from_port": "discharge", "to": "E-101", "to_port": "inlet", "stream": "S-103"},
+                {"from": "E-101", "from_port": "outlet", "to": "R-101", "to_port": "feed", "stream": "S-104"},
+                {"from": "R-101", "from_port": "product", "to": "E-102", "to_port": "inlet", "stream": "S-105"},
+                {"from": "E-102", "from_port": "outlet", "to": "V-101", "to_port": "feed", "stream": "S-106"},
+                {"from": "V-101", "from_port": "liquid", "to": "Product Boundary", "to_port": "in", "stream": "S-107"},
+                {"from": "V-101", "from_port": "vapor", "to": "SP-101", "to_port": "inlet", "stream": "S-108"},
+                {"from": "SP-101", "from_port": "out_1", "to": "Product Boundary", "to_port": "in", "stream": "S-109"},
+                {"from": "SP-101", "from_port": "out_2", "to": "Product Boundary", "to_port": "in", "stream": "S-110"}
             ]
             st.session_state.fs_boundaries = {
                 "S-101": {"T": 300.0, "P": 2500000.0, "F": 40.0, "z": {"hydrogen": 0.74, "nitrogen": 0.25, "methane": 0.01}}
@@ -804,15 +810,15 @@ elif simulation_mode == "Interactive Flowsheet Designer":
                 "F-101": {"type": "FlashDrum", "thermo": "Ideal Gas / Activity model", "variation": ""}
             }
             st.session_state.fs_connections = [
-                {"from": "Feed Boundary", "to": "C-101", "stream": "S-101"},
-                {"from": "Feed Boundary", "to": "C-101", "stream": "S-102"},
-                {"from": "C-101", "to": "Product Boundary", "stream": "S-103"},
-                {"from": "C-101", "to": "P-101", "stream": "S-104"},
-                {"from": "P-101", "to": "HEX-101", "stream": "S-105"},
-                {"from": "HEX-101", "to": "H-101", "stream": "S-106"},
-                {"from": "H-101", "to": "F-101", "stream": "S-107"},
-                {"from": "F-101", "to": "Product Boundary", "stream": "S-108"},
-                {"from": "F-101", "to": "Product Boundary", "stream": "S-109"}
+                {"from": "Feed Boundary", "from_port": "out", "to": "C-101", "to_port": "gas_in", "stream": "S-101"},
+                {"from": "Feed Boundary", "from_port": "out", "to": "C-101", "to_port": "solvent_in", "stream": "S-102"},
+                {"from": "C-101", "from_port": "clean_gas", "to": "Product Boundary", "to_port": "in", "stream": "S-103"},
+                {"from": "C-101", "from_port": "rich_solvent", "to": "P-101", "to_port": "suction", "stream": "S-104"},
+                {"from": "P-101", "from_port": "discharge", "to": "HEX-101", "to_port": "tube_in", "stream": "S-105"},
+                {"from": "HEX-101", "from_port": "tube_out", "to": "H-101", "to_port": "inlet", "stream": "S-106"},
+                {"from": "H-101", "from_port": "outlet", "to": "F-101", "to_port": "feed", "stream": "S-107"},
+                {"from": "F-101", "from_port": "vapor", "to": "Product Boundary", "to_port": "in", "stream": "S-108"},
+                {"from": "F-101", "from_port": "liquid", "to": "Product Boundary", "to_port": "in", "stream": "S-109"}
             ]
             st.session_state.fs_boundaries = {
                 "S-101": {"T": 320.0, "P": 105000.0, "F": 30.0, "z": {"co2": 0.15, "nitrogen": 0.85}},
@@ -830,13 +836,13 @@ elif simulation_mode == "Interactive Flowsheet Designer":
                 "MIX-101": {"type": "Mixer", "thermo": "e-NRTL Electrolytes", "variation": ""}
             }
             st.session_state.fs_connections = [
-                {"from": "Feed Boundary", "to": "P-101", "stream": "S-101"},
-                {"from": "P-101", "to": "M-101", "stream": "S-102"},
-                {"from": "M-101", "to": "MIX-101", "stream": "S-103"},
-                {"from": "M-101", "to": "V-101", "stream": "S-104"},
-                {"from": "V-101", "to": "Product Boundary", "stream": "S-105"},
-                {"from": "Feed Boundary", "to": "MIX-101", "stream": "S-106"},
-                {"from": "MIX-101", "to": "Product Boundary", "stream": "S-107"}
+                {"from": "Feed Boundary", "from_port": "out", "to": "P-101", "to_port": "suction", "stream": "S-101"},
+                {"from": "P-101", "from_port": "discharge", "to": "M-101", "to_port": "feed_in", "stream": "S-102"},
+                {"from": "M-101", "from_port": "permeate_out", "to": "MIX-101", "to_port": "in_1", "stream": "S-103"},
+                {"from": "M-101", "from_port": "retentate_out", "to": "V-101", "to_port": "inlet", "stream": "S-104"},
+                {"from": "V-101", "from_port": "outlet", "to": "Product Boundary", "to_port": "in", "stream": "S-105"},
+                {"from": "Feed Boundary", "from_port": "out", "to": "MIX-101", "to_port": "in_2", "stream": "S-106"},
+                {"from": "MIX-101", "from_port": "mixed_out", "to": "Product Boundary", "to_port": "in", "stream": "S-107"}
             ]
             st.session_state.fs_boundaries = {
                 "S-101": {"T": 293.15, "P": 101325.0, "F": 50.0, "z": {"water": 0.965, "nacl": 0.035}},
@@ -854,12 +860,12 @@ elif simulation_mode == "Interactive Flowsheet Designer":
                 "C-101": {"type": "DistillationColumn", "thermo": "Ideal Gas / Activity model", "variation": "Sieve Tray Column"}
             }
             st.session_state.fs_connections = [
-                {"from": "Feed Boundary", "to": "R-101", "stream": "S-101"},
-                {"from": "R-101", "to": "P-101", "stream": "S-102"},
-                {"from": "P-101", "to": "V-101", "stream": "S-103"},
-                {"from": "V-101", "to": "C-101", "stream": "S-104"},
-                {"from": "C-101", "to": "Product Boundary", "stream": "S-105"},
-                {"from": "C-101", "to": "Product Boundary", "stream": "S-106"}
+                {"from": "Feed Boundary", "from_port": "out", "to": "R-101", "to_port": "feed", "stream": "S-101"},
+                {"from": "R-101", "from_port": "product", "to": "P-101", "to_port": "suction", "stream": "S-102"},
+                {"from": "P-101", "from_port": "discharge", "to": "V-101", "to_port": "inlet", "stream": "S-103"},
+                {"from": "V-101", "from_port": "outlet", "to": "C-101", "to_port": "feed", "stream": "S-104"},
+                {"from": "C-101", "from_port": "distillate", "to": "Product Boundary", "to_port": "in", "stream": "S-105"},
+                {"from": "C-101", "from_port": "bottoms", "to": "Product Boundary", "to_port": "in", "stream": "S-106"}
             ]
             st.session_state.fs_boundaries = {
                 "S-101": {"T": 305.0, "P": 101325.0, "F": 20.0, "z": {"water": 0.80, "glucose": 0.15, "ethanol": 0.05}}
@@ -938,10 +944,17 @@ elif simulation_mode == "Interactive Flowsheet Designer":
     st.sidebar.subheader("4. Connect Streams")
     if len(st.session_state.fs_units) >= 1:
         u_options = list(st.session_state.fs_units.keys())
-        # Add a special boundary option to start feeds
         conn_from = st.sidebar.selectbox("Source Node", ["Feed Boundary"] + u_options)
+        from_type = st.session_state.fs_units.get(conn_from, {}).get("type", "Feed Boundary") if conn_from != "Feed Boundary" else "Feed Boundary"
+        out_ports = [p.id for p in PortRegistry.get_ports(from_type) if p.type == "outlet"] or ["out"]
+        conn_from_port = st.sidebar.selectbox("From Nozzle / Port", out_ports, format_func=lambda pid: f"{pid} ({PortRegistry.get_port(from_type, pid).label if PortRegistry.get_port(from_type, pid) else pid})")
+
         conn_to = st.sidebar.selectbox("Destination Node", ["Product Boundary"] + u_options)
-        conn_stream = st.sidebar.text_input("Stream Identifier", "S-101")
+        to_type = st.session_state.fs_units.get(conn_to, {}).get("type", "Product Boundary") if conn_to != "Product Boundary" else "Product Boundary"
+        in_ports = [p.id for p in PortRegistry.get_ports(to_type) if p.type == "inlet"] or ["in"]
+        conn_to_port = st.sidebar.selectbox("To Nozzle / Port", in_ports, format_func=lambda pid: f"{pid} ({PortRegistry.get_port(to_type, pid).label if PortRegistry.get_port(to_type, pid) else pid})")
+
+        conn_stream = st.sidebar.text_input("Stream Identifier", f"S-{len(st.session_state.fs_connections)+101}")
         
         if st.sidebar.button("Add stream connection"):
             if conn_from == conn_to:
@@ -949,10 +962,12 @@ elif simulation_mode == "Interactive Flowsheet Designer":
             else:
                 st.session_state.fs_connections.append({
                     "from": conn_from,
+                    "from_port": conn_from_port,
                     "to": conn_to,
+                    "to_port": conn_to_port,
                     "stream": conn_stream
                 })
-                st.sidebar.success(f"Stream {conn_stream} connected!")
+                st.sidebar.success(f"Stream {conn_stream} connected ({conn_from_port} ➔ {conn_to_port})!")
     else:
         st.sidebar.info("Add equipment to define stream connections.")
 
@@ -1052,16 +1067,43 @@ elif simulation_mode == "Interactive Flowsheet Designer":
         units_obj_map[uid] = unit_obj
         units_obj_list.append(unit_obj)
         
-    # 3. Connect ports
+    # 3. Connect ports with port-index resolution
     for conn in st.session_state.fs_connections:
         f_node = conn["from"]
         t_node = conn["to"]
-        st_obj = streams_obj_map[conn["stream"]]
+        s_id = conn["stream"]
+        st_obj = streams_obj_map[s_id]
+        
+        f_port = conn.get("from_port")
+        t_port = conn.get("to_port")
         
         if f_node in units_obj_map:
-            units_obj_map[f_node].connect_outlet(st_obj)
+            u = units_obj_map[f_node]
+            utype = st.session_state.fs_units.get(f_node, {}).get("type", "Pump")
+            out_ports = [p.id for p in PortRegistry.get_ports(utype) if p.type == "outlet"]
+            target_idx = out_ports.index(f_port) if f_port in out_ports else len(u.outlets)
+            
+            while len(u.outlets) <= target_idx:
+                u.outlets.append(None)
+            u.outlets[target_idx] = st_obj
+            st_obj.upstream_unit = u
+            
         if t_node in units_obj_map:
-            units_obj_map[t_node].connect_inlet(st_obj)
+            u = units_obj_map[t_node]
+            utype = st.session_state.fs_units.get(t_node, {}).get("type", "Pump")
+            in_ports = [p.id for p in PortRegistry.get_ports(utype) if p.type == "inlet"]
+            target_idx = in_ports.index(t_port) if t_port in in_ports else len(u.inlets)
+            
+            while len(u.inlets) <= target_idx:
+                u.inlets.append(None)
+            u.inlets[target_idx] = st_obj
+            if u not in st_obj.downstream_units:
+                st_obj.downstream_units.append(u)
+
+    # Clean up any None gaps in unit ports
+    for u in units_obj_map.values():
+        u.inlets = [s for s in u.inlets if s is not None]
+        u.outlets = [s for s in u.outlets if s is not None]
             
     # 4. Apply Boundary specifications
     for s_id, spec in st.session_state.fs_boundaries.items():
@@ -1216,8 +1258,43 @@ elif simulation_mode == "Interactive Flowsheet Designer":
         if len(st.session_state.fs_connections) == 0:
             st.info("Flowsheet is empty. Define stream connections in the sidebar to visualize.")
         else:
-            view_mode = st.radio("Render Engine Mode", ["CAD Vector Flowsheet (SVG)", "Mermaid Logic Flowsheet"], horizontal=True)
-            if view_mode == "CAD Vector Flowsheet (SVG)":
+            view_mode = st.radio(
+                "Render Engine Mode", 
+                ["Interactive Studio (Drag-and-Drop)", "CAD Vector Flowsheet (SVG)", "Mermaid Logic Flowsheet"], 
+                horizontal=True
+            )
+            if view_mode == "Interactive Studio (Drag-and-Drop)":
+                st.info("💡 **Interactive Studio**: Click and drag equipment to move. Drag the bottom-right corner of any node to resize it. Drag from an orange outlet nozzle to a green inlet nozzle to wire a stream.")
+                studio_html = InteractiveCanvasStudio.render_studio_html(
+                    st.session_state.fs_units, 
+                    st.session_state.fs_connections, 
+                    stream_states=streams_obj_map,
+                    units_states=units_obj_map,
+                    species_map=mapped_sp,
+                    canvas_height=650
+                )
+                components.html(studio_html, height=670, scrolling=False)
+                
+                with st.expander("Import / Paste Canvas Layout JSON"):
+                    sync_json_input = st.text_area("Paste Canvas JSON from 'Copy / Sync Config' button", height=90, key="sync_canvas_json_area")
+                    if st.button("Apply Canvas Config to Flowsheet"):
+                        try:
+                            import json
+                            parsed = json.loads(sync_json_input)
+                            if "units" in parsed:
+                                for uid, udata in parsed["units"].items():
+                                    if uid in st.session_state.fs_units:
+                                        st.session_state.fs_units[uid]["x"] = udata.get("x", 100)
+                                        st.session_state.fs_units[uid]["y"] = udata.get("y", 100)
+                                        st.session_state.fs_units[uid]["width"] = udata.get("width", 80)
+                                        st.session_state.fs_units[uid]["height"] = udata.get("height", 80)
+                            if "connections" in parsed:
+                                st.session_state.fs_connections = parsed["connections"]
+                            st.success("Canvas configuration applied successfully!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error applying JSON: {e}")
+            elif view_mode == "CAD Vector Flowsheet (SVG)":
                 from src.visualization.svg_flowsheet import SVGFlowsheet
                 variations = {uid: udata.get("variation", "Sieve Tray Column") for uid, udata in st.session_state.fs_units.items()}
                 svg_code = SVGFlowsheet.generate_flowsheet_svg(
@@ -1269,17 +1346,19 @@ elif simulation_mode == "Interactive Flowsheet Designer":
         if len(st.session_state.fs_connections) == 0:
             st.info("No stream connections defined.")
         else:
-            sh_col1, sh_col2, sh_col3, sh_col4 = st.columns([1.5, 2, 2, 1.2])
+            sh_col1, sh_col2, sh_col3, sh_col4 = st.columns([1.2, 2.2, 2.2, 1.0])
             sh_col1.markdown("**Stream ID**")
-            sh_col2.markdown("**From Node**")
-            sh_col3.markdown("**To Node**")
+            sh_col2.markdown("**From (Port)**")
+            sh_col3.markdown("**To (Port)**")
             sh_col4.markdown("**Action**")
             
             for c in st.session_state.fs_connections:
-                s_col1, s_col2, s_col3, s_col4 = st.columns([1.5, 2, 2, 1.2])
+                s_col1, s_col2, s_col3, s_col4 = st.columns([1.2, 2.2, 2.2, 1.0])
+                from_p = f" [{c['from_port']}]" if c.get("from_port") else ""
+                to_p = f" [{c['to_port']}]" if c.get("to_port") else ""
                 s_col1.write(c["stream"])
-                s_col2.write(c["from"])
-                s_col3.write(c["to"])
+                s_col2.write(f"{c['from']}{from_p}")
+                s_col3.write(f"{c['to']}{to_p}")
                 if s_col4.button("Delete", key=f"del_stream_btn_{c['stream']}"):
                     stream_id_del = c["stream"]
                     # Remove connection

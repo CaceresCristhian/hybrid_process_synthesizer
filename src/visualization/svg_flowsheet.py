@@ -209,9 +209,9 @@ class SVGFlowsheet:
         product_nodes = set()
         
         for c in connections_list:
-            src = c["from"]
-            dst = c["to"]
-            conn_s_id = c["stream"]
+            src = c.get("from", "Feed Boundary")
+            dst = c.get("to", "Product Boundary")
+            conn_s_id = c.get("stream", "S-101")
             
             # Separate Feed Boundaries
             if src == "Feed Boundary":
@@ -230,7 +230,9 @@ class SVGFlowsheet:
             mapped_connections.append({
                 "from": src_id,
                 "to": dst_id,
-                "stream": conn_s_id
+                "stream": conn_s_id,
+                "from_port": c.get("from_port"),
+                "to_port": c.get("to_port")
             })
 
         # 2. Dynamic Topological Rank (Layered Graph Layout)
@@ -327,15 +329,67 @@ class SVGFlowsheet:
                 x1, y1 = node_coords[src]
                 x2, y2 = node_coords[dst]
                 
-                # Offsets based on node types
-                # Source adjustments
+                # Offsets based on node types and specific port IDs
                 src_type = units_dict.get(src, {}).get("type", "Boundary")
+                src_port = conn.get("from_port", "outlet")
+                
                 if src.startswith("Feed_"):
                     x1_offset = x1 + 100
                     y1_offset = y1 + 20
-                elif src_type == "DistillationColumn":
-                    x1_offset = x1 + 60
-                    y1_offset = y1 + 70
+                elif src_type in ["DistillationColumn", "BinaryDistillationColumn"]:
+                    if src_port == "distillate":
+                        x1_offset = x1 + 30
+                        y1_offset = y1
+                    elif src_port == "bottoms":
+                        x1_offset = x1 + 30
+                        y1_offset = y1 + 140
+                    elif src_port == "side_draw":
+                        x1_offset = x1 + 60
+                        y1_offset = y1 + 90
+                    else:
+                        x1_offset = x1 + 60
+                        y1_offset = y1 + 70
+                elif src_type == "AbsorptionColumn":
+                    if src_port == "clean_gas":
+                        x1_offset = x1 + 27
+                        y1_offset = y1
+                    elif src_port == "rich_solvent":
+                        x1_offset = x1 + 27
+                        y1_offset = y1 + 130
+                    else:
+                        x1_offset = x1 + 55
+                        y1_offset = y1 + 65
+                elif src_type == "HeatExchanger":
+                    if src_port == "shell_out":
+                        x1_offset = x1 + 25
+                        y1_offset = y1 + 50
+                    else:
+                        x1_offset = x1 + 50
+                        y1_offset = y1 + 35
+                elif src_type in ["FlashDrum", "Separator"]:
+                    if src_port == "vapor":
+                        x1_offset = x1 + 22
+                        y1_offset = y1
+                    elif src_port == "liquid":
+                        x1_offset = x1 + 22
+                        y1_offset = y1 + 90
+                    else:
+                        x1_offset = x1 + 45
+                        y1_offset = y1 + 45
+                elif src_type == "MembraneUnit":
+                    if src_port == "permeate_out":
+                        x1_offset = x1 + 50
+                        y1_offset = y1 + 15
+                    else:
+                        x1_offset = x1 + 50
+                        y1_offset = y1 + 45
+                elif src_type in ["SolidLiquidSeparator", "LauterTun"]:
+                    if src_port == "solids_out":
+                        x1_offset = x1 + 25
+                        y1_offset = y1 + 60
+                    else:
+                        x1_offset = x1 + 50
+                        y1_offset = y1 + 25
                 elif src_type == "Bioreactor":
                     x1_offset = x1 + 80
                     y1_offset = y1 + 50
@@ -349,17 +403,33 @@ class SVGFlowsheet:
                     x1_offset = x1 + 40
                     y1_offset = y1 + 20
                 else:
-                    x1_offset = x1
-                    y1_offset = y1
+                    x1_offset = x1 + 45
+                    y1_offset = y1 + 25
                     
                 # Destination adjustments
                 dst_type = units_dict.get(dst, {}).get("type", "Boundary")
+                dst_port = conn.get("to_port", "inlet")
+                
                 if dst.startswith("Product_"):
                     x2_offset = x2
                     y2_offset = y2 + 20
-                elif dst_type == "DistillationColumn":
+                elif dst_type in ["DistillationColumn", "BinaryDistillationColumn"]:
                     x2_offset = x2
                     y2_offset = y2 + 70
+                elif dst_type == "AbsorptionColumn":
+                    if dst_port == "solvent_in":
+                        x2_offset = x2
+                        y2_offset = y2 + 25
+                    else:
+                        x2_offset = x2
+                        y2_offset = y2 + 105
+                elif dst_type == "HeatExchanger":
+                    if dst_port == "shell_in":
+                        x2_offset = x2 + 25
+                        y2_offset = y2
+                    else:
+                        x2_offset = x2
+                        y2_offset = y2 + 25
                 elif dst_type == "Bioreactor":
                     x2_offset = x2
                     y2_offset = y2 + 50
@@ -374,7 +444,7 @@ class SVGFlowsheet:
                     y2_offset = y2 + 20
                 else:
                     x2_offset = x2
-                    y2_offset = y2
+                    y2_offset = y2 + 25
                 
                 # Compile stream tooltip text
                 st_data = stream_states.get(s_id)
