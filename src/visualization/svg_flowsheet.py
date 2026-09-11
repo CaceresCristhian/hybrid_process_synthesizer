@@ -168,7 +168,15 @@ class SVGFlowsheet:
             svg.append(f'<line x1="{x+10}" y1="{y+h-5}" x2="{x+w-10}" y2="{y+5}" stroke="#4338ca" stroke-dasharray="4 2" stroke-width="2" />')
             svg.append(f'<text x="{x + w/2}" y="{y + h/2 + 4}" font-family="Inter, sans-serif" font-size="9" font-weight="bold" fill="#312e81" text-anchor="middle">{eq_id}</text>')
 
-        elif eq_type in ["CSTR", "Reactor", "IdealCSTR", "IdealPFR"]:
+        elif eq_type in ["EquilibriumReactor", "REquil"]:
+            w, h = 60, 75
+            # Catalyst fixed-bed reactor with equilibrium symbol (<=>)
+            svg.append(cls.draw_capsule(x, y, w, h, fill="#fdf4ff", stroke="#9333ea", stroke_width=2))
+            svg.append(f'<rect x="{x+6}" y="{y+20}" width="{w-12}" height="35" fill="#f3e8ff" stroke="#9333ea" stroke-dasharray="2 2" stroke-width="1"/>')
+            svg.append(f'<text x="{x + w/2}" y="{y + 42}" font-family="Inter, sans-serif" font-size="12" font-weight="bold" fill="#7e22ce" text-anchor="middle">⇌</text>')
+            svg.append(f'<text x="{x + w/2}" y="{y + h/2 + 25}" font-family="Inter, sans-serif" font-size="9" font-weight="bold" fill="#581c87" text-anchor="middle">{eq_id}</text>')
+
+        elif eq_type in ["CSTR", "Reactor", "IdealCSTR", "IdealPFR", "PFR"]:
             w, h = 60, 70
             svg.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="10" fill="#fdf4ff" stroke="#c026d3" stroke-width="2" />')
             svg.append(f'<line x1="{x+w/2}" y1="{y-5}" x2="{x+w/2}" y2="{y+h-15}" stroke="#c026d3" stroke-width="2" />')

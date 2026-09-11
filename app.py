@@ -26,7 +26,9 @@ from src.units.thermal import Heater, Cooler, HeatExchanger
 from src.units.separators import FlashDrum, Splitter, SolidLiquidSeparator, MembraneUnit
 from src.units.compressor import Compressor, Expander
 from src.units.columns import AbsorptionColumn
-from src.units.reactors import IdealCSTR, IdealPFR
+from src.units.reactors import IdealCSTR, IdealPFR, EquilibriumReactor
+from src.chemical_phenomena.activity_models import NRTLModel, WilsonModel, VLEPhaseDiagramGenerator
+from src.chemical_phenomena.reactions import Reaction, ReactionNetwork, REACTION_PACKAGES
 from src.visualization.ports import PortRegistry
 from src.visualization.interactive_canvas import InteractiveCanvasStudio
 
@@ -37,6 +39,9 @@ import src.visualization.svg_flowsheet
 import src.visualization.pid_layout
 import src.visualization.ports
 import src.visualization.interactive_canvas
+import src.chemical_phenomena.activity_models
+import src.chemical_phenomena.reactions
+import src.chemical_phenomena.thermodynamics
 import src.units.mixer
 import src.units.thermal
 import src.units.separators
@@ -50,6 +55,9 @@ importlib.reload(src.visualization.svg_flowsheet)
 importlib.reload(src.visualization.pid_layout)
 importlib.reload(src.visualization.ports)
 importlib.reload(src.visualization.interactive_canvas)
+importlib.reload(src.chemical_phenomena.activity_models)
+importlib.reload(src.chemical_phenomena.reactions)
+importlib.reload(src.chemical_phenomena.thermodynamics)
 importlib.reload(src.units.mixer)
 importlib.reload(src.units.thermal)
 importlib.reload(src.units.separators)
@@ -777,7 +785,7 @@ elif simulation_mode == "Interactive Flowsheet Designer":
                 "M-101": {"type": "Mixer", "thermo": "Peng-Robinson EOS", "variation": ""},
                 "K-101": {"type": "Compressor", "thermo": "Peng-Robinson EOS", "variation": ""},
                 "E-101": {"type": "Heater", "thermo": "Peng-Robinson EOS", "t_target": 670.0, "variation": ""},
-                "R-101": {"type": "CSTR", "thermo": "Peng-Robinson EOS", "volume": 8.0, "variation": ""},
+                "R-101": {"type": "EquilibriumReactor", "thermo": "Peng-Robinson EOS", "volume": 8.0, "reaction_package": "Haber-Bosch Ammonia Synthesis", "variation": ""},
                 "E-102": {"type": "Cooler", "thermo": "Peng-Robinson EOS", "t_target": 245.0, "variation": ""},
                 "V-101": {"type": "FlashDrum", "thermo": "Peng-Robinson EOS", "variation": ""},
                 "SP-101": {"type": "Splitter", "thermo": "Peng-Robinson EOS", "variation": ""}
@@ -852,12 +860,12 @@ elif simulation_mode == "Interactive Flowsheet Designer":
 
         elif selected_preset == "Bio-Ethanol Fermentation & Distillation Plant":
             st.session_state.fs_species = ["Ethanol", "Water", "Glucose", "CO2"]
-            st.session_state.fs_fluid_pkg = "Ideal Gas / Activity model"
+            st.session_state.fs_fluid_pkg = "NRTL Activity Model"
             st.session_state.fs_units = {
-                "R-101": {"type": "Bioreactor", "thermo": "Ideal Gas / Activity model", "volume": 15.0, "variation": ""},
-                "P-101": {"type": "Pump", "thermo": "Ideal Gas / Activity model", "p_boost": 150000.0, "variation": ""},
-                "V-101": {"type": "ControlValve", "thermo": "Ideal Gas / Activity model", "opening": 1.0, "variation": ""},
-                "C-101": {"type": "DistillationColumn", "thermo": "Ideal Gas / Activity model", "variation": "Sieve Tray Column"}
+                "R-101": {"type": "CSTR", "thermo": "NRTL Activity Model", "volume": 15.0, "reaction_package": "Bio-Ethanol Fermentation", "variation": ""},
+                "P-101": {"type": "Pump", "thermo": "NRTL Activity Model", "p_boost": 150000.0, "variation": ""},
+                "V-101": {"type": "ControlValve", "thermo": "NRTL Activity Model", "opening": 1.0, "variation": ""},
+                "C-101": {"type": "DistillationColumn", "thermo": "NRTL Activity Model", "variation": "Sieve Tray Column"}
             }
             st.session_state.fs_connections = [
                 {"from": "Feed Boundary", "from_port": "out", "to": "R-101", "to_port": "feed", "stream": "S-101"},
@@ -892,10 +900,15 @@ elif simulation_mode == "Interactive Flowsheet Designer":
                 st.session_state.fs_species.remove(sp_name)
                 st.rerun()
     
+    fluid_pkg_options = [
+        "Peng-Robinson EOS", "NRTL Activity Model", "Wilson Activity Model", 
+        "Ideal Gas / Activity model", "e-NRTL Electrolytes", "PINN ML Surrogate"
+    ]
+    cur_pkg_idx = fluid_pkg_options.index(st.session_state.fs_fluid_pkg) if st.session_state.fs_fluid_pkg in fluid_pkg_options else 0
     st.session_state.fs_fluid_pkg = st.sidebar.selectbox(
         "Global Thermodynamic Base",
-        ["Ideal Gas / Activity model", "Peng-Robinson EOS", "e-NRTL Electrolytes", "PINN ML Surrogate"],
-        index=["Ideal Gas / Activity model", "Peng-Robinson EOS", "e-NRTL Electrolytes", "PINN ML Surrogate"].index(st.session_state.fs_fluid_pkg)
+        fluid_pkg_options,
+        index=cur_pkg_idx
     )
     
     # Toggle Display Units
@@ -914,14 +927,17 @@ elif simulation_mode == "Interactive Flowsheet Designer":
             "Pump", "Compressor", "Expander", "ControlValve", 
             "Heater", "Cooler", "HeatExchanger", 
             "FlashDrum", "Splitter", "SolidLiquidSeparator", "MembraneUnit", 
-            "AbsorptionColumn", "DistillationColumn", "Bioreactor", "CSTR", "Mixer"
+            "AbsorptionColumn", "DistillationColumn", "Bioreactor", "CSTR", "PFR", "EquilibriumReactor", "Mixer"
         ]
     )
-    local_pkg = st.sidebar.selectbox("Local Fluid Package", ["Default (Global)", "Ideal Gas / Activity model", "Peng-Robinson EOS", "e-NRTL Electrolytes", "PINN ML Surrogate"])
+    local_pkg = st.sidebar.selectbox("Local Fluid Package", ["Default (Global)"] + fluid_pkg_options)
     
     col_variation = "Sieve Tray Column"
+    rxn_pkg = "None"
     if add_type == "DistillationColumn":
         col_variation = st.sidebar.selectbox("Symbol Style", ["Sieve Tray Column", "Packed Bed Column"])
+    elif add_type in ["CSTR", "PFR", "EquilibriumReactor"]:
+        rxn_pkg = st.sidebar.selectbox("Reaction Scheme", ["None", "Haber-Bosch Ammonia Synthesis", "Bio-Ethanol Fermentation", "Water-Gas Shift", "Generic 1st-Order Exothermic"])
         
     if st.sidebar.button("Add to Flowsheet"):
         if add_id in st.session_state.fs_units:
@@ -936,6 +952,7 @@ elif simulation_mode == "Interactive Flowsheet Designer":
                 "p_boost": 150000.0,
                 "volume": 2.0,
                 "variation": col_variation,
+                "reaction_package": rxn_pkg if rxn_pkg != "None" else None,
                 "t_target": 350.0
             }
             st.sidebar.success(f"Added {add_type} {add_id}")
@@ -1055,7 +1072,11 @@ elif simulation_mode == "Interactive Flowsheet Designer":
         elif utype == "Bioreactor":
             unit_obj = JacketedBioreactor(uid, uid, volume_init=udata.get("volume", 2.0), s_in=180.0, u_coeff=600.0, area=5.0, temp_sp=310.15, pid_controller=PIDController(10,2,0.1,0.05,0,1))
         elif utype == "CSTR":
-            unit_obj = IdealCSTR(uid, uid, volume=udata.get("volume", 2.0))
+            unit_obj = IdealCSTR(uid, uid, volume=udata.get("volume", 2.0), reaction_package=udata.get("reaction_package"))
+        elif utype == "PFR":
+            unit_obj = IdealPFR(uid, uid, volume=udata.get("volume", 3.0), reaction_package=udata.get("reaction_package"))
+        elif utype == "EquilibriumReactor":
+            unit_obj = EquilibriumReactor(uid, uid, volume=udata.get("volume", 4.0), reaction_package=udata.get("reaction_package", "Haber-Bosch Ammonia Synthesis"))
         elif utype == "DistillationColumn":
             unit_obj = BinaryDistillationColumn(uid, uid, num_stages=12, feed_stage=6, reflux_ratio=2.5)
         elif utype == "Mixer":
@@ -1152,7 +1173,7 @@ elif simulation_mode == "Interactive Flowsheet Designer":
                         unit.run_simulation((0,0), [], species_map=species_map_id)
                     elif isinstance(unit, AbsorptionColumn):
                         unit.run_simulation((0,0), [], species_map=species_map_id)
-                    elif isinstance(unit, IdealCSTR):
+                    elif isinstance(unit, (IdealCSTR, IdealPFR, EquilibriumReactor)):
                         unit.run_simulation((0,0), [], species_map=species_map_id)
                     elif isinstance(unit, FlowsheetMixer):
                         unit.run_simulation((0,0), [], species_map=species_map_id)
@@ -1247,10 +1268,11 @@ elif simulation_mode == "Interactive Flowsheet Designer":
     mapped_sp = {sp.id: sp for sp in [species_map[k] for k in st.session_state.fs_species]}
 
     # RENDER INTERACTIVE TABS
-    tab_pid, tab_mass, tab_energy = st.tabs([
+    tab_pid, tab_mass, tab_energy, tab_vle = st.tabs([
         "Flowsheet Canvas & P&ID", 
         "Mass Balance Summary", 
-        "Energy Balance Summary"
+        "Energy Balance Summary",
+        "VLE & Reaction Kinetics Explorer"
     ])
     
     with tab_pid:
@@ -1468,3 +1490,76 @@ elif simulation_mode == "Interactive Flowsheet Designer":
                     st.metric(f"Energy Balance Error ({status_lbl})", diff_val)
             else:
                 st.info("Set boundaries and run simulation to populate balances.")
+
+    with tab_vle:
+        st.write("#### Non-Ideal VLE & Reaction Kinetics Explorer")
+        st.markdown("Analyze binary phase behavior, **NRTL / Wilson azeotropes**, and **Arrhenius reaction rates** in real-time.")
+        
+        vle_col1, vle_col2 = st.columns([1.2, 2.0])
+        with vle_col1:
+            st.write("##### VLE System Configuration")
+            sp_choices = list(species_map.keys())
+            def_sp1 = "Ethanol" if "Ethanol" in sp_choices else sp_choices[0]
+            def_sp2 = "Water" if "Water" in sp_choices else sp_choices[min(1, len(sp_choices)-1)]
+            
+            vle_sp1 = st.selectbox("Light Component (Species 1)", sp_choices, index=sp_choices.index(def_sp1), key="vle_sp1_sel")
+            vle_sp2 = st.selectbox("Heavy Component (Species 2)", sp_choices, index=sp_choices.index(def_sp2), key="vle_sp2_sel")
+            
+            vle_model = st.radio("Activity Model", ["NRTL", "Wilson"], horizontal=True, key="vle_model_rad")
+            vle_press_kpa = st.number_input("System Pressure (kPa)", min_value=10.0, max_value=2000.0, value=101.325, step=10.0, key="vle_press_num")
+            
+            st.write("##### Reaction Kinetics Inspector")
+            rxn_options = list(REACTION_PACKAGES.keys())
+            chosen_rxn_pkg = st.selectbox("Inspect Reaction Scheme", rxn_options, key="vle_rxn_pkg_sel")
+            rxn_net = REACTION_PACKAGES[chosen_rxn_pkg]
+            for r_item in rxn_net.reactions:
+                st.caption(f"**{r_item.name}** | $\\Delta H_{{298}} = {r_item.delta_H_298/1000.0:.1f}$ kJ/mol | $E_a = {r_item.Ea_f/1000.0:.1f}$ kJ/mol")
+                
+        with vle_col2:
+            if vle_sp1 == vle_sp2:
+                st.warning("Please choose two different chemical species for VLE evaluation.")
+            else:
+                sp1_obj = species_map[vle_sp1]
+                sp2_obj = species_map[vle_sp2]
+                diag_data = VLEPhaseDiagramGenerator.generate_diagram(
+                    sp1_obj, sp2_obj, total_pressure=vle_press_kpa * 1000.0, model=vle_model.lower(), num_points=50
+                )
+                
+                if diag_data["has_azeotrope"]:
+                    st.success(f"🎯 **Azeotropic Inversion Detected ({vle_model})**: $x_{{{vle_sp1}}} = {diag_data['azeotrope_x1']*100.0:.2f}\\,\\text{{mol}}\\%$, $T_{{az}} = {diag_data['azeotrope_T_K'] - 273.15:.2f}\\,^\\circ\\text{{C}}$ (${diag_data['azeotrope_T_K']:.2f}\\,\\text{{K}}$)")
+                else:
+                    st.info(f"Zeotropic System: No binary azeotrope under {vle_press_kpa:.1f} kPa with {vle_model}.")
+                    
+                # Plot x-y Equilibrium Curve
+                fig_vle = go.Figure()
+                fig_vle.add_trace(go.Scatter(x=diag_data["x1"], y=diag_data["y1"], mode="lines", name="VLE Curve (x vs y)", line=dict(color="#0ea5e9", width=3)))
+                fig_vle.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode="lines", name="Diagonal (x = y)", line=dict(color="#64748b", dash="dash")))
+                if diag_data["has_azeotrope"]:
+                    fig_vle.add_trace(go.Scatter(
+                        x=[diag_data["azeotrope_x1"]], y=[diag_data["azeotrope_x1"]],
+                        mode="markers", name="Azeotrope Pinch",
+                        marker=dict(size=12, color="#ef4444", symbol="star")
+                    ))
+                fig_vle.update_layout(
+                    title=f"x-y Equilibrium Curve: {vle_sp1} + {vle_sp2} ({vle_model} at {vle_press_kpa:.1f} kPa)",
+                    xaxis_title=f"Liquid Mole Fraction x ({vle_sp1})",
+                    yaxis_title=f"Vapor Mole Fraction y ({vle_sp1})",
+                    height=320,
+                    margin=dict(l=20, r=20, t=40, b=20)
+                )
+                st.plotly_chart(fig_vle, use_container_width=True)
+                
+                # Plot T-x-y Phase Envelope
+                fig_txy = go.Figure()
+                t_celsius = [t - 273.15 for t in diag_data["T_bubble"]]
+                fig_txy.add_trace(go.Scatter(x=diag_data["x1"], y=t_celsius, mode="lines", name="Bubble Point T-x", line=dict(color="#10b981", width=2.5)))
+                fig_txy.add_trace(go.Scatter(x=diag_data["y1"], y=t_celsius, mode="lines", name="Dew Point T-y", line=dict(color="#f97316", width=2.5)))
+                fig_txy.update_layout(
+                    title=f"T-x-y Phase Envelope: {vle_sp1} + {vle_sp2}",
+                    xaxis_title=f"Mole Fraction of {vle_sp1}",
+                    yaxis_title="Temperature (°C)",
+                    height=300,
+                    margin=dict(l=20, r=20, t=40, b=20)
+                )
+                st.plotly_chart(fig_txy, use_container_width=True)
+

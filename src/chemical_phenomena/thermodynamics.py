@@ -229,17 +229,10 @@ class Thermodynamics:
             # Attempt to call CoolProp if available
             try:
                 import CoolProp.CoolProp as CP
-                # We fetch properties for a simulated or actual component (e.g. Methane/Ethane or Water)
-                # Since CoolProp requires specific fluid names, let's map them:
                 fluid_mapping = {"water": "Water", "methane": "Methane", "ethane": "Ethane", "ethanol": "Ethanol"}
-                
-                # Simple binary CoolProp flash approximation using HEOS
-                # (For mixtures, CoolProp uses Refprop or specific mixing rules, which can be unstable.
-                # So we show external values for water or pure components, and fallback for mixtures)
                 if len(feed_composition) == 1:
                     sp_id = list(feed_composition.keys())[0]
                     fluid = fluid_mapping.get(sp_id, sp_id.capitalize())
-                    # pure component flash
                     Psat = CP.PropsSI('P', 'T', temperature, 'Q', 0.5, fluid)
                     if pressure > Psat:
                         return {"beta": 0.0, "x": feed_composition, "y": feed_composition, "K": {sp_id: 1.0}}
@@ -248,10 +241,57 @@ class Thermodynamics:
                     else:
                         return {"beta": 0.5, "x": feed_composition, "y": feed_composition, "K": {sp_id: 1.0}}
             except Exception:
-                # fall through to pure Python Peng-Robinson if CoolProp is not available or errors
                 pass
 
-        # 2. Pure Python Peng-Robinson Flash Solver
+        # 2. Activity coefficient flash (NRTL / Wilson)
+        if method.lower() in ["nrtl", "wilson", "activity"]:
+            from src.chemical_phenomena.activity_models import NRTLModel, WilsonModel
+            model_cls = WilsonModel if method.lower() == "wilson" else NRTLModel
+            
+            x = feed_composition.copy()
+            y = feed_composition.copy()
+            K = {}
+            for sp in species_list:
+                try:
+                    p_sat = cls.calculate_vapor_pressure(sp, temperature)
+                    K[sp.id] = p_sat / pressure
+                except Exception:
+                    K[sp.id] = 1.0
+                    
+            beta = 0.5
+            for _ in range(40):
+                beta = cls.solve_rachford_rice(feed_composition, K)
+                for sp_id in feed_composition:
+                    x[sp_id] = feed_composition[sp_id] / (1.0 + beta * (K[sp_id] - 1.0))
+                    y[sp_id] = K[sp_id] * x[sp_id]
+                sum_x = sum(x.values())
+                sum_y = sum(y.values())
+                x = {k: v / max(1e-12, sum_x) for k, v in x.items()}
+                y = {k: v / max(1e-12, sum_y) for k, v in y.items()}
+                
+                gammas = model_cls.calculate_gammas(x, temperature)
+                new_K = {}
+                max_diff = 0.0
+                for sp in species_list:
+                    try:
+                        p_sat = cls.calculate_vapor_pressure(sp, temperature)
+                        k_val = gammas.get(sp.id, 1.0) * p_sat / pressure
+                    except Exception:
+                        k_val = 1.0
+                    k_val = max(1e-5, min(k_val, 1e5))
+                    max_diff = max(max_diff, abs(k_val - K.get(sp.id, 1.0)))
+                    new_K[sp.id] = k_val
+                K = new_K
+                if max_diff < 1e-5:
+                    break
+            return {
+                "beta": beta,
+                "x": x,
+                "y": y,
+                "K": K
+            }
+
+        # 3. Pure Python Peng-Robinson Flash Solver
         # Initial guess of K-values using Antoine vapor pressures
         K = {}
         for sp in species_list:

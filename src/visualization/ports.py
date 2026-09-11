@@ -89,6 +89,10 @@ EQUIPMENT_PORTS: Dict[str, List[PortDefinition]] = {
         PortDefinition("feed", "Tube Feed In", "inlet", 0.0, 0.5, "any"),
         PortDefinition("product", "Reactor Product Out", "outlet", 1.0, 0.5, "any")
     ],
+    "EquilibriumReactor": [
+        PortDefinition("feed", "Gas Feed In", "inlet", 0.0, 0.5, "gas"),
+        PortDefinition("product", "Equilibrium Product", "outlet", 1.0, 0.5, "gas")
+    ],
     "ControlValve": [
         PortDefinition("inlet", "Valve Inlet", "inlet", 0.0, 0.5, "any"),
         PortDefinition("outlet", "Throttled Outlet", "outlet", 1.0, 0.5, "any")
@@ -113,6 +117,7 @@ DEFAULT_UNIT_DIMENSIONS: Dict[str, Dict[str, int]] = {
     "Bioreactor": {"width": 90, "height": 110},
     "CSTR": {"width": 85, "height": 100},
     "PFR": {"width": 110, "height": 55},
+    "EquilibriumReactor": {"width": 85, "height": 95},
     "FlashDrum": {"width": 75, "height": 100},
     "SolidLiquidSeparator": {"width": 85, "height": 95},
     "MembraneUnit": {"width": 100, "height": 60},
