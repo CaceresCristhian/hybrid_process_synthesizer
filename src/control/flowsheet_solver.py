@@ -377,4 +377,53 @@ class FlowsheetSolver:
             "decarbonization_pathways": pathways
         }
 
+    @classmethod
+    def compile_flowsheet_safety(cls, units_list: list, streams_list: list,
+                                 connections: list, species_map: dict) -> Dict[str, Any]:
+        """
+        Compiles plant-wide Process Safety, API 520/521/526 relief valve schedules,
+        and automated topological HAZOP matrix.
+        """
+        from src.safety.relief_sizing import ReliefValveSizer
+        from src.safety.hazop_analyzer import HAZOPAnalyzer
+
+        units_map = {getattr(u, "unit_id", str(idx)): u for idx, u in enumerate(units_list)}
+        streams_map = {getattr(s, "stream_id", str(idx)): s for idx, s in enumerate(streams_list)}
+
+        # 1. Relief Valve Sizing across pressurized equipment
+        relief_schedule = []
+        governing_scenarios_count = {}
+
+        for u_id, unit in units_map.items():
+            u_type = unit.__class__.__name__
+            if any(k in u_type for k in ["Column", "Reactor", "Drum", "Heater", "HeatExchanger"]):
+                eval_res = ReliefValveSizer.evaluate_equipment_relief_scenarios(unit, species_map)
+                relief_schedule.append({
+                    "valve_tag": f"PSV-{u_id}",
+                    "protected_unit": u_id,
+                    "unit_type": u_type,
+                    "set_pressure_kPa_g": eval_res["design_set_pressure_kPa_g"],
+                    "governing_scenario": eval_res["governing_scenario"],
+                    "required_area_mm2": eval_res["governing_required_area_mm2"],
+                    "selected_api_orifice": eval_res["governing_selected_orifice"],
+                    "flange_designation": eval_res["governing_flange"],
+                    "relieving_rate_kg_h": eval_res["governing_relieving_rate_kg_h"],
+                    "details": eval_res
+                })
+                scen = eval_res["governing_scenario"]
+                governing_scenarios_count[scen] = governing_scenarios_count.get(scen, 0) + 1
+
+        # 2. Automated Topological HAZOP Study
+        hazop_study = HAZOPAnalyzer.generate_flowsheet_hazop(units_map, streams_map, connections)
+        high_risk_count = sum(1 for row in hazop_study if row["risk_level"] in ["HIGH", "CRITICAL"])
+
+        return {
+            "relief_schedule": relief_schedule,
+            "governing_scenarios_count": governing_scenarios_count,
+            "hazop_study": hazop_study,
+            "total_nodes_analyzed": len(units_map),
+            "total_hazop_deviations": len(hazop_study),
+            "high_risk_deviations_count": high_risk_count
+        }
+
 

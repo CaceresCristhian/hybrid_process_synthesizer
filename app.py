@@ -42,6 +42,7 @@ from src.control.auto_tuning import AutoTuner
 from src.control.dynamic_engine import DynamicSimulationEngine
 from src.reporting.report_generator import ReportGenerator
 from src.economics.pinch_analysis import PinchAnalyzer, ThermalStream
+from src.safety import ReliefValveSizer, HAZOPAnalyzer, API_ORIFICE_SIZES
 
 # Force Streamlit to reload modified submodules to prevent caching errors on Streamlit Cloud
 import importlib
@@ -72,6 +73,8 @@ import src.economics.utility_costing
 import src.economics.profitability
 import src.economics.pinch_analysis
 import src.economics.lca_engine
+import src.safety.relief_sizing
+import src.safety.hazop_analyzer
 importlib.reload(src.database.loader)
 importlib.reload(src.visualization.svg_flowsheet)
 importlib.reload(src.visualization.pid_layout)
@@ -99,6 +102,8 @@ importlib.reload(src.economics.utility_costing)
 importlib.reload(src.economics.profitability)
 importlib.reload(src.economics.pinch_analysis)
 importlib.reload(src.economics.lca_engine)
+importlib.reload(src.safety.relief_sizing)
+importlib.reload(src.safety.hazop_analyzer)
 
 # Page Config
 st.set_page_config(
@@ -1306,7 +1311,7 @@ elif simulation_mode == "Interactive Flowsheet Designer":
     mapped_sp = {sp.id: sp for sp in [species_map[k] for k in st.session_state.fs_species]}
 
     # RENDER INTERACTIVE TABS
-    tab_pid, tab_mass, tab_energy, tab_vle, tab_econ, tab_dynamic, tab_pinch, tab_lca = st.tabs([
+    tab_pid, tab_mass, tab_energy, tab_vle, tab_econ, tab_dynamic, tab_pinch, tab_lca, tab_safety = st.tabs([
         "Flowsheet Canvas & P&ID", 
         "Mass Balance Summary", 
         "Energy Balance Summary", 
@@ -1314,7 +1319,8 @@ elif simulation_mode == "Interactive Flowsheet Designer":
         "Economics & Capital Costing (Turton/Guthrie)",
         "Dynamic Control & Real-Time Transients",
         "Pinch Energy Integration & Heat Recovery",
-        "Environmental LCA & Decarbonization Studio"
+        "Environmental LCA & Decarbonization Studio",
+        "Process Safety & HAZOP Engineering"
     ])
     
     with tab_pid:
@@ -2641,4 +2647,243 @@ elif simulation_mode == "Interactive Flowsheet Designer":
             })
 
         st.dataframe(lci_rows, use_container_width=True)
+
+    with tab_safety:
+        st.write("### 🛡️ Process Safety, HAZOP & API Pressure Relief Sizing")
+        st.markdown(
+            "Industrial process safety engineering compliant with **API Standard 520 (Parts I & II)**, "
+            "**API Standard 521**, and **API Standard 526**, combined with an automated topological **HAZOP Matrix Generator**."
+        )
+
+        # Compile Safety & HAZOP Data
+        safety_compiled = FlowsheetSolver.compile_flowsheet_safety(
+            units_list=list(units_obj_map.values()),
+            streams_list=list(streams_obj_map.values()),
+            connections=st.session_state.fs_connections,
+            species_map=mapped_sp
+        )
+
+        relief_sched = safety_compiled["relief_schedule"]
+        hazop_rows = safety_compiled["hazop_study"]
+
+        # 1. Interactive Toolbar Controls
+        psv_col1, psv_col2, psv_col3, psv_col4 = st.columns([3, 2, 2, 2])
+        with psv_col1:
+            unit_options = [u["protected_unit"] for u in relief_sched] if relief_sched else ["No Pressurized Units"]
+            selected_unit_id = st.selectbox(
+                "Protected Equipment Node",
+                unit_options,
+                index=0,
+                help="Select equipment to inspect API relief valve sizing calculations."
+            )
+
+        selected_valve = next((v for v in relief_sched if v["protected_unit"] == selected_unit_id), relief_sched[0] if relief_sched else None)
+
+        with psv_col2:
+            override_p_set = st.number_input(
+                "Set Pressure P_set (kPa g)",
+                min_value=50.0, max_value=10000.0,
+                value=float(selected_valve["set_pressure_kPa_g"]) if selected_valve else 500.0,
+                step=25.0,
+                help="MAWP / Stamped set pressure of pressure relief valve."
+            )
+
+        with psv_col3:
+            scenario_choice = st.selectbox(
+                "Active Relief Scenario",
+                [
+                    "Governing Scenario (Auto-Identified)",
+                    "External Pool Fire Engulfment (API 521)",
+                    "Blocked Outlet / Valve Closure (API 520)",
+                    "Cooling Utility Failure"
+                ],
+                index=0,
+                help="Examine individual overpressure scenarios vs governing worst-case."
+            )
+
+        with psv_col4:
+            f_env = st.selectbox(
+                "Fire Insulation Factor (F)",
+                [
+                    "1.0 (Bare / Uninsulated)",
+                    "0.30 (Insulated Vessel)",
+                    "0.50 (Water Spray / Deluge)"
+                ],
+                index=0,
+                help="API 521 environmental heat absorption reduction factor."
+            )
+            f_env_val = float(f_env.split()[0])
+
+        # Sizing Calculation for Selected Unit
+        if selected_valve:
+            target_unit_obj = units_obj_map.get(selected_unit_id)
+            eval_data = ReliefValveSizer.evaluate_equipment_relief_scenarios(target_unit_obj, mapped_sp) if target_unit_obj else selected_valve["details"]
+
+            if "Fire" in scenario_choice:
+                calc_res = next((s for s in eval_data["scenarios_evaluated"] if "Fire" in s["scenario"]), eval_data["scenarios_evaluated"][0])
+            elif "Blocked" in scenario_choice:
+                calc_res = next((s for s in eval_data["scenarios_evaluated"] if "Blocked" in s["scenario"]), eval_data["scenarios_evaluated"][0])
+            elif "Cooling" in scenario_choice:
+                calc_res = next((s for s in eval_data["scenarios_evaluated"] if "Cooling" in s["scenario"]), eval_data["scenarios_evaluated"][0])
+            else:
+                calc_res = eval_data["scenarios_evaluated"][0]
+
+            # 2. Top 5 KPI Cards
+            st.write("##### 🎯 Relief Device Design Targets (API 520 / 526)")
+            k1, k2, k3, k4, k5 = st.columns(5)
+            k1.metric(
+                "Governing Scenario",
+                calc_res.get("scenario", "Fire Engulfment").split("(")[0].strip()[:20],
+                f"{calc_res['overpressure_pct']:.0f}% Overpressure",
+                help="Critical sizing case demanding largest required orifice discharge area."
+            )
+            sel_orif = calc_res["selected_orifice"]
+            k2.metric(
+                "Selected API Orifice",
+                f"Orifice {sel_orif['letter']} ({sel_orif['standard_area_mm2']:.0f} mm²)",
+                f"Flange: {sel_orif['flange_designation'].split()[0]}",
+                help="Standard API 526 letter designated orifice and nozzle sizes."
+            )
+            k3.metric(
+                "Relieving Flow Rate",
+                f"{calc_res['relieving_rate_kg_h']:,.1f} kg/h",
+                f"T = {calc_res['relieving_temperature_K']:.1f} K",
+                help="Mass discharge rate required to prevent vessel pressure from exceeding allowable accumulation."
+            )
+            k4.metric(
+                "Relieving Pressure (P1)",
+                f"{calc_res['relieving_pressure_P1_kPa_abs']:,.1f} kPa",
+                f"Set: {override_p_set:.0f} kPa g",
+                help="Absolute relieving pressure P1 during active emergency discharge."
+            )
+            k5.metric(
+                "Capacity Utilization",
+                f"{sel_orif['capacity_utilization_pct']:.1f}%",
+                f"+{sel_orif['margin_pct']:.1f}% Safety Margin",
+                delta_color="normal",
+                help="Percent of standard API orifice area utilized by calculated required area."
+            )
+
+            st.write("---")
+
+            # 3. Visual Charts
+            ch_col1, ch_col2 = st.columns(2)
+
+            with ch_col1:
+                # Chart 1: API 526 Orifice Selection Comparison
+                fig_orf = go.Figure()
+                letters = list(API_ORIFICE_SIZES.keys())
+                areas = [API_ORIFICE_SIZES[l]["area_mm2"] for l in letters]
+                req_a = calc_res["required_area_mm2"]
+
+                colors = ["#10b981" if l == sel_orif["letter"] else "#94a3b8" for l in letters]
+
+                fig_orf.add_trace(go.Bar(
+                    x=letters,
+                    y=areas,
+                    marker_color=colors,
+                    text=[f"{a:.0f}" for a in areas],
+                    textposition="auto",
+                    name="API 526 Orifices"
+                ))
+                fig_orf.add_hline(
+                    y=req_a,
+                    line_dash="dash",
+                    line_color="#ef4444",
+                    annotation_text=f"Required Area: {req_a:.1f} mm²"
+                )
+                fig_orf.update_layout(
+                    title="<b>API 526 Standard Orifice Selection (Effective Area mm²)</b>",
+                    xaxis_title="API Standard Letter Orifice (D through T)",
+                    yaxis_title="Discharge Area (mm²)",
+                    height=360,
+                    margin=dict(l=20, r=20, t=40, b=20)
+                )
+                st.plotly_chart(fig_orf, use_container_width=True)
+
+            with ch_col2:
+                # Chart 2: Relief Scenarios Load Comparison
+                fig_scen = go.Figure()
+                scen_names = [s.get("scenario", "Scenario").split("(")[0].strip() for s in eval_data["scenarios_evaluated"]]
+                scen_areas = [s["required_area_mm2"] for s in eval_data["scenarios_evaluated"]]
+                scen_rates = [s["relieving_rate_kg_h"] for s in eval_data["scenarios_evaluated"]]
+
+                fig_scen.add_trace(go.Bar(
+                    x=scen_names,
+                    y=scen_areas,
+                    marker_color=["#ef4444" if i == 0 else "#3b82f6" for i in range(len(scen_names))],
+                    text=[f"{a:.1f} mm²\\n({w:,.0f} kg/h)" for a, w in zip(scen_areas, scen_rates)],
+                    textposition="auto"
+                ))
+                fig_scen.update_layout(
+                    title="<b>Relief Scenarios Comparison: Required Orifice Area (mm²)</b>",
+                    xaxis_title="Overpressure Scenario",
+                    yaxis_title="Required Area (mm²)",
+                    height=360,
+                    margin=dict(l=20, r=20, t=40, b=20)
+                )
+                st.plotly_chart(fig_scen, use_container_width=True)
+
+        # 4. Plant-Wide Relief Valve Schedule
+        st.write("##### 📋 Plant-Wide Pressure Relief Device (PSV) Schedule")
+        if relief_sched:
+            sched_table = []
+            for r in relief_sched:
+                sched_table.append({
+                    "Valve Tag": r["valve_tag"],
+                    "Protected Unit": f"{r['protected_unit']} ({r['unit_type']})",
+                    "Set Pressure P_set (kPa g)": f"{r['set_pressure_kPa_g']:.0f}",
+                    "Governing Scenario": r["governing_scenario"].split("(")[0].strip(),
+                    "Relieving Load (kg/h)": f"{r['relieving_rate_kg_h']:,.1f}",
+                    "Req. Area (mm²)": f"{r['required_area_mm2']:.1f}",
+                    "Selected API Orifice": f"Orifice {r['selected_api_orifice']}",
+                    "Flange Size (ANSI)": r["flange_designation"]
+                })
+            st.dataframe(sched_table, use_container_width=True)
+
+        # 5. Automated Topological HAZOP Matrix Table
+        st.write("##### 🔍 Automated Process Hazard Analysis (HAZOP) Study Matrix")
+        st.caption(f"Evaluated {safety_compiled['total_nodes_analyzed']} equipment nodes generating {safety_compiled['total_hazop_deviations']} process deviations ({safety_compiled['high_risk_deviations_count']} High Risk).")
+
+        h_col1, h_col2 = st.columns([3, 1])
+        with h_col1:
+            filter_node = st.selectbox(
+                "Filter HAZOP by Equipment Node",
+                ["All Nodes"] + list(units_obj_map.keys()),
+                index=0
+            )
+
+        filtered_hazop = hazop_rows
+        if filter_node != "All Nodes":
+            filtered_hazop = [r for r in hazop_rows if filter_node in r["node"]]
+
+        hazop_display = []
+        for r in filtered_hazop:
+            badge = "🔴 HIGH" if r["risk_level"] == "HIGH" else ("🟠 MEDIUM" if r["risk_level"] == "MEDIUM" else "🟢 LOW")
+            hazop_display.append({
+                "Study ID": r["id"],
+                "Node / Equipment": r["node"],
+                "Parameter": r["parameter"],
+                "Guide Word": r["guide_word"],
+                "Process Deviation": r["deviation"],
+                "Credible Causes": r["causes"],
+                "Consequences": r["consequences"],
+                "Engineering Safeguards": r["safeguards"],
+                "Risk Level": badge
+            })
+
+        st.dataframe(hazop_display, use_container_width=True)
+
+        # 6. Download HAZOP Report
+        csv_hazop = "Study ID,Node,Parameter,Guide Word,Deviation,Causes,Consequences,Safeguards,Risk Score,Risk Level\\n"
+        for r in hazop_rows:
+            csv_hazop += f'\"{r["id"]}\",\"{r["node"]}\",\"{r["parameter"]}\",\"{r["guide_word"]}\",\"{r["deviation"]}\",\"{r["causes"]}\",\"{r["consequences"]}\",\"{r["safeguards"]}\",{r["risk_score"]},\"{r["risk_level"]}\"\\n'
+
+        st.download_button(
+            label="📑 Download HAZOP Study Matrix (CSV)",
+            data=csv_hazop,
+            file_name="hazop_study_matrix.csv",
+            mime="text/csv",
+            use_container_width=False
+        )
 
