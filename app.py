@@ -31,6 +31,11 @@ from src.chemical_phenomena.activity_models import NRTLModel, WilsonModel, VLEPh
 from src.chemical_phenomena.reactions import Reaction, ReactionNetwork, REACTION_PACKAGES
 from src.visualization.ports import PortRegistry
 from src.visualization.interactive_canvas import InteractiveCanvasStudio
+from src.economics import (
+    CostCorrelations, EquipmentCosting, CapitalCosting, 
+    UtilityCosting, EconomicAnalyzer, DEFAULT_CEPCI, 
+    MATERIAL_FACTORS, DEFAULT_UTILITY_RATES
+)
 
 # Force Streamlit to reload modified submodules to prevent caching errors on Streamlit Cloud
 import importlib
@@ -50,6 +55,11 @@ import src.units.columns
 import src.units.reactors
 import src.units.pump
 import src.control.flowsheet_solver
+import src.economics.cost_correlations
+import src.economics.equipment_costing
+import src.economics.capital_costing
+import src.economics.utility_costing
+import src.economics.profitability
 importlib.reload(src.database.loader)
 importlib.reload(src.visualization.svg_flowsheet)
 importlib.reload(src.visualization.pid_layout)
@@ -66,6 +76,11 @@ importlib.reload(src.units.columns)
 importlib.reload(src.units.reactors)
 importlib.reload(src.units.pump)
 importlib.reload(src.control.flowsheet_solver)
+importlib.reload(src.economics.cost_correlations)
+importlib.reload(src.economics.equipment_costing)
+importlib.reload(src.economics.capital_costing)
+importlib.reload(src.economics.utility_costing)
+importlib.reload(src.economics.profitability)
 
 # Page Config
 st.set_page_config(
@@ -930,6 +945,7 @@ elif simulation_mode == "Interactive Flowsheet Designer":
             "AbsorptionColumn", "DistillationColumn", "Bioreactor", "CSTR", "PFR", "EquilibriumReactor", "Mixer"
         ]
     )
+    add_material = st.sidebar.selectbox("Material of Construction", ["Carbon Steel", "Stainless Steel 316", "Titanium", "Hastelloy C-276", "Monel"])
     local_pkg = st.sidebar.selectbox("Local Fluid Package", ["Default (Global)"] + fluid_pkg_options)
     
     col_variation = "Sieve Tray Column"
@@ -947,6 +963,7 @@ elif simulation_mode == "Interactive Flowsheet Designer":
         else:
             st.session_state.fs_units[add_id] = {
                 "type": add_type,
+                "material": add_material,
                 "thermo": st.session_state.fs_fluid_pkg if local_pkg == "Default (Global)" else local_pkg,
                 "opening": 1.0,
                 "p_boost": 150000.0,
@@ -1085,6 +1102,7 @@ elif simulation_mode == "Interactive Flowsheet Designer":
             unit_obj = FlowsheetPump(uid, uid)
 
         unit_obj.thermo_base = udata.get("thermo", st.session_state.fs_fluid_pkg)
+        unit_obj.material = udata.get("material", "Carbon Steel")
         units_obj_map[uid] = unit_obj
         units_obj_list.append(unit_obj)
         
@@ -1268,11 +1286,12 @@ elif simulation_mode == "Interactive Flowsheet Designer":
     mapped_sp = {sp.id: sp for sp in [species_map[k] for k in st.session_state.fs_species]}
 
     # RENDER INTERACTIVE TABS
-    tab_pid, tab_mass, tab_energy, tab_vle = st.tabs([
+    tab_pid, tab_mass, tab_energy, tab_vle, tab_econ = st.tabs([
         "Flowsheet Canvas & P&ID", 
         "Mass Balance Summary", 
         "Energy Balance Summary",
-        "VLE & Reaction Kinetics Explorer"
+        "VLE & Reaction Kinetics Explorer",
+        "Economics & Capital Costing (Turton/Guthrie)"
     ])
     
     with tab_pid:
@@ -1562,4 +1581,167 @@ elif simulation_mode == "Interactive Flowsheet Designer":
                     margin=dict(l=20, r=20, t=40, b=20)
                 )
                 st.plotly_chart(fig_txy, use_container_width=True)
+
+    with tab_econ:
+        st.write("#### Techno-Economic Assessment & Capital Costing (Turton & Guthrie)")
+        st.markdown("Rigorous equipment sizing, materials of construction, Bare Module Cost ($C_{BM}$), plant-wide CAPEX, utility OPEX, and project profitability.")
+
+        # Economic Configuration
+        with st.expander("⚙️ Economic Parameters & Utility Cost Rates", expanded=False):
+            tea_c1, tea_c2, tea_c3 = st.columns(3)
+            with tea_c1:
+                econ_cepci = st.slider("CEPCI Cost Index (Base: 397 in 2001)", min_value=397.0, max_value=1200.0, value=825.0, step=5.0)
+                econ_plant_mode = st.selectbox("Project Investment Type", ["Grassroots Plant", "Battery-Limits Expansion"])
+            with tea_c2:
+                econ_mat_override = st.selectbox("Material Override (All Units)", ["None (Use Unit Specified)", "Carbon Steel", "Stainless Steel 316", "Titanium", "Hastelloy C-276", "Monel"])
+                econ_op_hours = st.number_input("Annual Operating Hours (h/yr)", min_value=1000.0, max_value=8760.0, value=8000.0, step=500.0)
+            with tea_c3:
+                econ_elec_rate = st.number_input("Electricity Rate ($/kWh)", min_value=0.01, max_value=0.50, value=0.085, step=0.01)
+                econ_steam_rate = st.number_input("LP Steam Rate ($/GJ)", min_value=0.5, max_value=30.0, value=4.50, step=0.5)
+                econ_cool_rate = st.number_input("Cooling Water Rate ($/GJ)", min_value=0.05, max_value=5.0, value=0.354, step=0.05)
+
+        if not units_obj_list:
+            st.info("No equipment units in flowsheet. Add equipment in the sidebar to view capital costing.")
+        else:
+            mat_arg = None if econ_mat_override.startswith("None") else econ_mat_override
+            custom_rates = {
+                "electricity_usd_per_kwh": econ_elec_rate,
+                "low_pressure_steam_usd_per_gj": econ_steam_rate,
+                "cooling_water_usd_per_gj": econ_cool_rate
+            }
+
+            econ_results = FlowsheetSolver.compile_flowsheet_economics(
+                units_list=units_obj_list,
+                streams_list=list(streams_obj_map.values()),
+                species_map=mapped_sp,
+                cepci=econ_cepci,
+                plant_mode=econ_plant_mode,
+                operating_hours=econ_op_hours,
+                material_override=mat_arg,
+                utility_rates=custom_rates
+            )
+            capex = econ_results["capex"]
+            opex = econ_results["opex"]
+            prof = econ_results["profitability"]
+            eq_costs = econ_results["equipment_costs"]
+
+            # 1. Top KPI Metric Cards
+            kpi_c1, kpi_c2, kpi_c3, kpi_c4, kpi_c5 = st.columns(5)
+            kpi_c1.metric("Bare Module Cost ($C_{BM}$)", f"${capex['total_bare_module_cost_C_BM']:,.0f}")
+            kpi_c2.metric("Fixed Capital (FCI)", f"${capex['fixed_capital_investment_FCI']:,.0f}")
+            kpi_c3.metric("Total Investment (TCI)", f"${capex['total_capital_investment_TCI']:,.0f}")
+            kpi_c4.metric("Annual Utility OPEX", f"${opex['total_annual_utility_opex_usd']:,.0f}/yr")
+            npv_val = prof['net_present_value_NPV_usd']
+            kpi_c5.metric("15-Yr Project NPV", f"${npv_val:,.0f}", f"Payback: {prof['payback_period_years']} yrs")
+
+            st.write("---")
+
+            # 2. Detailed Equipment Breakdown Table
+            st.write("##### Equipment Sizing & Bare Module Cost Breakdown")
+            table_rows = []
+            for item in eq_costs:
+                table_rows.append({
+                    "Node ID": item.get("unit_id"),
+                    "Unit Type": item.get("unit_type"),
+                    "Sizing Metric": f"{item.get('sizing_parameter')}: {item.get('sizing_value')} {item.get('sizing_unit')}",
+                    "Material": item.get("material"),
+                    "P (bar)": f"{item.get('design_pressure_bar'):.1f}",
+                    "F_P": f"{item.get('F_P'):.2f}",
+                    "F_M": f"{item.get('F_M'):.2f}",
+                    "Purchased Cp ($)": f"${item.get('Cp', 0.0):,.0f}",
+                    "Bare Module C_BM ($)": f"${item.get('C_BM', 0.0):,.0f}",
+                    "Notes": item.get("notes", "")
+                })
+            st.dataframe(table_rows, use_container_width=True)
+
+            # 3. Visualizations
+            st.write("##### Capital & Operational Expenditure Analysis")
+            chart_col1, chart_col2 = st.columns(2)
+
+            with chart_col1:
+                # Donut Chart: Equipment C_BM Distribution
+                labels = [f"{item['unit_id']} ({item['unit_type']})" for item in eq_costs]
+                values = [item['C_BM'] for item in eq_costs]
+                fig_donut = go.Figure(data=[go.Pie(labels=labels, values=values, hole=0.45)])
+                fig_donut.update_layout(
+                    title="Bare Module Cost Distribution ($C_{BM}$ by Unit)",
+                    height=340,
+                    margin=dict(l=20, r=20, t=40, b=20)
+                )
+                st.plotly_chart(fig_donut, use_container_width=True)
+
+            with chart_col2:
+                # Waterfall Chart: CAPEX Buildup
+                cp_total = capex["total_purchased_cost_Cp"]
+                c_bm_total = capex["total_bare_module_cost_C_BM"]
+                field_install = max(0.0, c_bm_total - cp_total)
+                contingency = capex["contingency_fee"]
+                contractor = capex["contractor_fee"]
+                site_dev = capex["site_development_cost"]
+                wc = capex["working_capital_WC"]
+                tci = capex["total_capital_investment_TCI"]
+
+                wf_x = ["Purchased Eq (Cp)", "Direct/Indirect Field", "Bare Module (C_BM)", "Contingency (15%)", "Contractor Fee (3%)", "Site Infrastructure", "Working Capital (15%)", "Total Investment (TCI)"]
+                wf_y = [cp_total, field_install, 0, contingency, contractor, site_dev, wc, 0]
+                wf_measure = ["relative", "relative", "total", "relative", "relative", "relative", "relative", "total"]
+
+                fig_wf = go.Figure(go.Waterfall(
+                    name="CAPEX",
+                    orientation="v",
+                    measure=wf_measure,
+                    x=wf_x,
+                    textposition="outside",
+                    text=[f"${v/1000:,.0f}k" if v != 0 else "" for v in [cp_total, field_install, c_bm_total, contingency, contractor, site_dev, wc, tci]],
+                    y=wf_y,
+                    connector={"line": {"color": "rgb(63, 63, 63)"}},
+                ))
+                fig_wf.update_layout(
+                    title="CAPEX Buildup Waterfall ($ USD)",
+                    height=340,
+                    margin=dict(l=20, r=20, t=40, b=20)
+                )
+                st.plotly_chart(fig_wf, use_container_width=True)
+
+            chart_col3, chart_col4 = st.columns(2)
+
+            with chart_col3:
+                # Donut Chart: Utility OPEX
+                u_labels = ["Electricity", "Steam Heating", "Cooling Water", "Refrigeration"]
+                u_vals = [
+                    opex["annual_electricity_cost_usd"],
+                    opex["annual_steam_cost_usd"],
+                    opex["annual_cooling_water_cost_usd"],
+                    opex["annual_refrigeration_cost_usd"]
+                ]
+                active_u = [(l, v) for l, v in zip(u_labels, u_vals) if v > 0]
+                if active_u:
+                    fig_u = go.Figure(data=[go.Pie(labels=[x[0] for x in active_u], values=[x[1] for x in active_u], hole=0.45)])
+                    fig_u.update_layout(
+                        title=f"Annual Utility OPEX Breakdown (${opex['total_annual_utility_opex_usd']:,.0f}/yr)",
+                        height=340,
+                        margin=dict(l=20, r=20, t=40, b=20)
+                    )
+                    st.plotly_chart(fig_u, use_container_width=True)
+                else:
+                    st.info("No utility duty recorded for current flowsheet operation.")
+
+            with chart_col4:
+                # Line Chart: Cumulative Discounted Cash Flow & NPV
+                cum_cf = prof["cumulative_cash_flow"]
+                years = prof["cash_flow_years"]
+                fig_cf = go.Figure()
+                fig_cf.add_trace(go.Scatter(
+                    x=years, y=cum_cf, mode="lines+markers",
+                    name="Cumulative DCF", line=dict(color="#10b981", width=3)
+                ))
+                fig_cf.add_hline(y=0.0, line_dash="dash", line_color="#ef4444", annotation_text="Break-Even Line")
+                fig_cf.update_layout(
+                    title=f"15-Year Cumulative Discounted Cash Flow (NPV: ${prof['net_present_value_NPV_usd']:,.0f})",
+                    xaxis_title="Project Year",
+                    yaxis_title="Cumulative Discounted Cash Flow ($ USD)",
+                    height=340,
+                    margin=dict(l=20, r=20, t=40, b=20)
+                )
+                st.plotly_chart(fig_cf, use_container_width=True)
+
 

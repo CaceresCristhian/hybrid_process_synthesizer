@@ -10,6 +10,9 @@ class BaseUnit(ABC):
         self.unit_id = unit_id
         self.name = name
         self.sizing_results = {}
+        self.cost_results = {}
+        self.material = "Carbon Steel"
+        self.design_pressure = 101325.0
         
         # Connections
         self.inlets = []
@@ -47,3 +50,11 @@ class BaseUnit(ABC):
     def size_equipment(self) -> dict:
         """Sizes mechanical structural properties of unit."""
         pass
+
+    def cost_equipment(self, material: str = None, cepci: float = 825.0) -> dict:
+        """Computes Turton/Guthrie purchased and bare module costs for this unit."""
+        from src.economics.equipment_costing import EquipmentCosting
+        mat = material or self.material
+        self.cost_results = EquipmentCosting.cost_unit(self, material=mat, cepci=cepci)
+        return self.cost_results
+

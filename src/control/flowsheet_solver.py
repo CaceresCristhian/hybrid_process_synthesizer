@@ -245,3 +245,61 @@ class FlowsheetSolver:
             "energy_balance_error_kW": error,
             "is_conserved": is_conserved
         }
+
+    # ==========================================
+    # TECHNO-ECONOMIC ASSESSMENT (TEA) COMPILER
+    # ==========================================
+
+    @classmethod
+    def compile_flowsheet_economics(cls, units_list: list, streams_list: list, species_map: dict,
+                                    cepci: float = 825.0, plant_mode: str = "Grassroots Plant",
+                                    operating_hours: float = 8000.0, material_override: str = None,
+                                    utility_rates: dict = None, discount_rate: float = 0.10,
+                                    project_lifetime_years: int = 15,
+                                    product_revenue_annual: float = None) -> dict:
+        """
+        Compiles flowsheet-wide capital costs (CAPEX), utility operational costs (OPEX),
+        and investment profitability analysis (NPV, ROI, Payback).
+        """
+        from src.economics.equipment_costing import EquipmentCosting
+        from src.economics.capital_costing import CapitalCosting
+        from src.economics.utility_costing import UtilityCosting
+        from src.economics.profitability import EconomicAnalyzer
+
+        # 1. Cost individual equipment items
+        equipment_costs = []
+        for unit in units_list:
+            cost_res = EquipmentCosting.cost_unit(unit, material=material_override, cepci=cepci)
+            equipment_costs.append(cost_res)
+
+        # 2. Plant-wide CAPEX
+        capex = CapitalCosting.calculate_capex(
+            equipment_cost_list=equipment_costs,
+            plant_mode=plant_mode
+        )
+
+        # 3. Utility OPEX
+        opex = UtilityCosting.calculate_utility_opex(
+            units_list=units_list,
+            operating_hours_per_year=operating_hours,
+            rates=utility_rates
+        )
+
+        # 4. Profitability & Financial Metrics
+        profitability = EconomicAnalyzer.analyze_profitability(
+            capex_dict=capex,
+            utility_opex_dict=opex,
+            streams_list=streams_list,
+            species_map=species_map,
+            project_lifetime_years=project_lifetime_years,
+            discount_rate=discount_rate,
+            product_revenue_annual=product_revenue_annual
+        )
+
+        return {
+            "equipment_costs": equipment_costs,
+            "capex": capex,
+            "opex": opex,
+            "profitability": profitability
+        }
+
