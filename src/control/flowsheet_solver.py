@@ -617,6 +617,197 @@ class FlowsheetSolver:
             }
         }
 
+    @classmethod
+    def compile_flowsheet_digital_twin(cls, units_list: Any, streams_list: Any = None) -> Dict[str, Any]:
+        """
+        Compiles an IEC 62541 OPC-UA address space, DCS multi-loop operator faceplates,
+        and equipment health/fouling diagnostics across all flowsheet units.
+        """
+        from src.control.digital_twin import (
+            OPCUANode, OPCUATagRegistry, DCSControllerFaceplate, EquipmentHealthMonitor
+        )
 
+        if isinstance(units_list, dict):
+            units_list = list(units_list.values())
+        if streams_list is not None and isinstance(streams_list, dict):
+            streams_list = list(streams_list.values())
+        streams_list = streams_list or []
 
+        registry = OPCUATagRegistry()
+        dcs_faceplates = []
+        hex_health = []
+        pump_health = []
+        column_health = []
 
+        active_alarms_count = 0
+        critical_equipment_count = 0
+
+        for idx, u in enumerate(units_list):
+            uid = getattr(u, "unit_id", f"UNIT-{idx+1}")
+            utype = u.__class__.__name__
+
+            # 1. Primary Operating Telemetry
+            in_t_c = 25.0
+            in_p_kpa = 101.3
+            in_f_mol = 10.0
+            duty_kw = abs(getattr(u, "heat_duty", 0.0)) / 1000.0
+            power_kw = getattr(u, "work_input", 0.0) / 1000.0
+
+            if getattr(u, "inlets", None) and len(u.inlets) > 0:
+                st0 = u.inlets[0]
+                if st0.T is not None: in_t_c = st0.T - 273.15
+                if st0.P is not None: in_p_kpa = st0.P / 1000.0
+                if st0.F is not None: in_f_mol = st0.F
+
+            # 2. Register Standard OPC-UA Tags
+            t_node = OPCUANode(
+                node_id=f"ns=2;s=Plant.{uid}.PV_Temp",
+                browse_name=f"{uid}_PV_Temp",
+                unit_id=uid,
+                data_type="Double",
+                eng_units="°C",
+                value=round(in_t_c, 2),
+                description=f"Operating temperature for {uid} ({utype})"
+            )
+            p_node = OPCUANode(
+                node_id=f"ns=2;s=Plant.{uid}.PV_Press",
+                browse_name=f"{uid}_PV_Press",
+                unit_id=uid,
+                data_type="Double",
+                eng_units="kPa",
+                value=round(in_p_kpa, 2),
+                description=f"Operating pressure for {uid} ({utype})"
+            )
+            f_node = OPCUANode(
+                node_id=f"ns=2;s=Plant.{uid}.PV_Flow",
+                browse_name=f"{uid}_PV_Flow",
+                unit_id=uid,
+                data_type="Double",
+                eng_units="mol/s",
+                value=round(in_f_mol, 2),
+                description=f"Feed throughput for {uid} ({utype})"
+            )
+            d_node = OPCUANode(
+                node_id=f"ns=2;s=Plant.{uid}.PV_ThermalDuty",
+                browse_name=f"{uid}_PV_ThermalDuty",
+                unit_id=uid,
+                data_type="Double",
+                eng_units="kW",
+                value=round(duty_kw, 2),
+                description=f"Thermal duty for {uid} ({utype})"
+            )
+            run_node = OPCUANode(
+                node_id=f"ns=2;s=Plant.{uid}.STAT_Run",
+                browse_name=f"{uid}_STAT_Run",
+                unit_id=uid,
+                data_type="Boolean",
+                access_level="ReadWrite",
+                value=True,
+                description=f"Operational running status for {uid}"
+            )
+
+            registry.register_tag(t_node)
+            registry.register_tag(p_node)
+            registry.register_tag(f_node)
+            registry.register_tag(d_node)
+            registry.register_tag(run_node)
+
+            # 3. Create DCS Control Loops
+            if any(k in utype for k in ["Column", "Reactor", "CSTR", "Heater", "Cooler", "Crystallizer", "Dryer"]):
+                sp_t = round(in_t_c, 1)
+                fp = DCSControllerFaceplate(
+                    loop_id=f"TIC-{uid}",
+                    name=f"{uid} Temperature Control",
+                    unit_id=uid,
+                    loop_type="Temperature",
+                    pv_init=in_t_c,
+                    sp_init=sp_t,
+                    units="°C",
+                    pv_range=(max(0.0, in_t_c - 100.0), in_t_c + 100.0),
+                    hh_limit=round(in_t_c + 50.0, 1),
+                    h_limit=round(in_t_c + 25.0, 1),
+                    l_limit=round(in_t_c - 25.0, 1),
+                    ll_limit=round(in_t_c - 50.0, 1)
+                )
+                if fp.alarm_state != "NORMAL":
+                    active_alarms_count += 1
+                dcs_faceplates.append(fp)
+
+            elif any(k in utype for k in ["Pump", "Compressor", "ControlValve"]):
+                sp_p = round(in_p_kpa, 1)
+                fp = DCSControllerFaceplate(
+                    loop_id=f"PIC-{uid}",
+                    name=f"{uid} Pressure Control",
+                    unit_id=uid,
+                    loop_type="Pressure",
+                    pv_init=in_p_kpa,
+                    sp_init=sp_p,
+                    units="kPa",
+                    pv_range=(max(10.0, in_p_kpa * 0.5), in_p_kpa * 2.0),
+                    hh_limit=round(in_p_kpa * 1.5, 1),
+                    h_limit=round(in_p_kpa * 1.25, 1),
+                    l_limit=round(in_p_kpa * 0.75, 1),
+                    ll_limit=round(in_p_kpa * 0.5, 1)
+                )
+                if fp.alarm_state != "NORMAL":
+                    active_alarms_count += 1
+                dcs_faceplates.append(fp)
+
+            # 4. Equipment Health Diagnostics
+            if any(k in utype for k in ["HeatExchanger", "Heater", "Cooler"]):
+                u_clean = 850.0
+                area = getattr(u, "area", 45.0)
+                th_in, th_out = in_t_c + 40.0, in_t_c
+                tc_in, tc_out = 20.0, 45.0
+                foul_res = EquipmentHealthMonitor.evaluate_heat_exchanger_fouling(
+                    u_clean=u_clean,
+                    duty_kw=max(10.0, duty_kw),
+                    area_m2=area,
+                    t_hot_in=th_in, t_hot_out=th_out,
+                    t_cold_in=tc_in, t_cold_out=tc_out,
+                    hours_operated=2200.0
+                )
+                foul_res["unit_id"] = uid
+                foul_res["unit_name"] = getattr(u, "name", uid)
+                if "CRITICAL" in foul_res["health_status"]:
+                    critical_equipment_count += 1
+                hex_health.append(foul_res)
+
+            elif any(k in utype for k in ["Pump"]):
+                cav_res = EquipmentHealthMonitor.evaluate_pump_cavitation(
+                    p_suction_kpa=in_p_kpa,
+                    p_vapor_kpa=max(5.0, in_p_kpa * 0.3),
+                    npsh_required_m=2.5
+                )
+                cav_res["unit_id"] = uid
+                cav_res["unit_name"] = getattr(u, "name", uid)
+                if "CRITICAL" in cav_res["cavitation_risk"]:
+                    critical_equipment_count += 1
+                pump_health.append(cav_res)
+
+            elif any(k in utype for k in ["Column", "DistillationColumn"]):
+                stab_res = EquipmentHealthMonitor.evaluate_column_hydraulic_stability(
+                    vapor_velocity_m_s=1.25,
+                    flood_velocity_m_s=1.65
+                )
+                stab_res["unit_id"] = uid
+                stab_res["unit_name"] = getattr(u, "name", uid)
+                column_health.append(stab_res)
+
+        return {
+            "registry": registry,
+            "tags_list": registry.browse_tags(),
+            "dcs_faceplates": dcs_faceplates,
+            "faceplates_dict": [fp.to_dict() for fp in dcs_faceplates],
+            "health_diagnostics": {
+                "heat_exchangers": hex_health,
+                "pumps": pump_health,
+                "columns": column_health
+            },
+            "summary": {
+                "total_tags_count": len(registry.tags),
+                "total_control_loops": len(dcs_faceplates),
+                "active_alarms_count": active_alarms_count,
+                "critical_equipment_count": critical_equipment_count
+            }
+        }

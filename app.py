@@ -47,6 +47,10 @@ from src.optimization import SeparationSequencer, SequenceCandidate, ParetoOptim
 from src.chemical_phenomena.unifac import UNIFACModel, SUBGROUPS, SPECIES_FRAGMENTS
 from src.chemical_phenomena.pc_saft import PCSAFTModel, PCSAFT_DATABASE
 from src.units.solids import ContinuousCrystallizer, SprayDryer
+from src.control.digital_twin import (
+    OPCUANode, OPCUATagRegistry, DCSControllerFaceplate, EquipmentHealthMonitor
+)
+from src.visualization.plant_3d_viewer import Plant3DViewer
 
 # Force Streamlit to reload modified submodules to prevent caching errors on Streamlit Cloud
 import importlib
@@ -84,6 +88,8 @@ import src.optimization.pareto_optimizer
 import src.chemical_phenomena.unifac
 import src.chemical_phenomena.pc_saft
 import src.units.solids
+import src.control.digital_twin
+import src.visualization.plant_3d_viewer
 importlib.reload(src.database.loader)
 importlib.reload(src.visualization.svg_flowsheet)
 importlib.reload(src.visualization.pid_layout)
@@ -118,6 +124,8 @@ importlib.reload(src.optimization.pareto_optimizer)
 importlib.reload(src.chemical_phenomena.unifac)
 importlib.reload(src.chemical_phenomena.pc_saft)
 importlib.reload(src.units.solids)
+importlib.reload(src.control.digital_twin)
+importlib.reload(src.visualization.plant_3d_viewer)
 
 # Page Config
 st.set_page_config(
@@ -1329,7 +1337,7 @@ elif simulation_mode == "Interactive Flowsheet Designer":
     mapped_sp = {sp.id: sp for sp in [species_map[k] for k in st.session_state.fs_species]}
 
     # RENDER INTERACTIVE TABS
-    tab_pid, tab_mass, tab_energy, tab_vle, tab_econ, tab_dynamic, tab_pinch, tab_lca, tab_safety, tab_opt, tab_solids = st.tabs([
+    tab_pid, tab_mass, tab_energy, tab_vle, tab_econ, tab_dynamic, tab_pinch, tab_lca, tab_safety, tab_opt, tab_solids, tab_dtwin = st.tabs([
         "Flowsheet Canvas & P&ID", 
         "Mass Balance Summary", 
         "Energy Balance Summary", 
@@ -1340,7 +1348,8 @@ elif simulation_mode == "Interactive Flowsheet Designer":
         "Environmental LCA & Decarbonization Studio",
         "Process Safety & HAZOP Engineering",
         "Superstructure Synthesis & Pareto Optimization",
-        "Advanced Thermodynamics & Solids Processing"
+        "Advanced Thermodynamics & Solids Processing",
+        "Industrial Digital Twin & 3D Spatial Plant"
     ])
     
     with tab_pid:
@@ -3659,3 +3668,306 @@ elif simulation_mode == "Interactive Flowsheet Designer":
                 mime="text/csv",
                 use_container_width=False
             )
+
+    with tab_dtwin:
+        st.write("### 🏭 Industrial Digital Twin & 3D WebGL Spatial Plant Studio")
+        st.markdown("""
+            *Unite real-time supervisory control, IEC 62541 OPC-UA address space tag telemetry, DCS operator faceplates (Auto/Manual/Cascade), predictive equipment health & fouling diagnostics, and interactive Three.js 3D WebGL spatial plant visualizations.*
+        """)
+
+        # Sub-module selector
+        dt_submode = st.radio(
+            "Digital Twin Workstation View",
+            [
+                "🏭 3D WebGL Spatial Plant Studio (Three.js)",
+                "🎮 Virtual DCS Operator Console & Multi-Loop Faceplates",
+                "🌐 OPC-UA Tag Historian & SCADA Server",
+                "🛠️ Predictive Maintenance & Health Diagnostics"
+            ],
+            horizontal=True,
+            key="dt_submode_radio"
+        )
+
+        st.markdown("---")
+
+        # Compile flowsheet digital twin data
+        dt_data = FlowsheetSolver.compile_flowsheet_digital_twin(units_obj_list, streams_obj_map)
+        dt_registry = dt_data["registry"]
+        dt_tags = dt_data["tags_list"]
+        dt_faceplates = dt_data["dcs_faceplates"]
+        dt_health = dt_data["health_diagnostics"]
+        dt_summary = dt_data["summary"]
+
+        # =========================================================================
+        # SUB-MODULE 1: 3D WEBGL SPATIAL PLANT STUDIO
+        # =========================================================================
+        if dt_submode == "🏭 3D WebGL Spatial Plant Studio (Three.js)":
+            st.write("#### 🏭 Real-Time 3D WebGL Spatial Chemical Plant (Three.js)")
+            st.markdown("""
+                *Procedural 3D rendering of all flowsheet equipment extruded from mechanical sizing equations ($D_{\text{col}}, H_{\text{col}}, D_{\text{drum}}, V_{\text{vessel}}$), with directional 3D process piping networks, PBR materials, dynamic daylighting, and raycasted telemetry HUD overlays.*
+            """)
+
+            # 5 Key Metrics
+            m1, m2, m3, m4, m5 = st.columns(5)
+            m1.metric("3D Vessels Rendered", len(st.session_state.fs_units))
+            m2.metric("Process Piping Runs", len(st.session_state.fs_connections))
+            m3.metric("Lighting Engine", "PBR Directional Sun")
+            m4.metric("Interactive Controls", "Three.js OrbitControls")
+            m5.metric("Graphics Standard", "WebGL 2.0 / Hardware Accel")
+
+            # Render 3D Scene
+            p3d_html = Plant3DViewer.generate_plant_3d_html(
+                st.session_state.fs_units,
+                st.session_state.fs_connections,
+                stream_states=streams_obj_map,
+                units_states=units_obj_map,
+                species_map=mapped_sp,
+                canvas_height=650
+            )
+            components.html(p3d_html, height=670, scrolling=False)
+
+            with st.expander("ℹ️ 3D Navigation Controls & Spatial Layout Guide"):
+                st.markdown("""
+                - **Orbit / Rotate View**: Click and drag with Left Mouse Button.
+                - **Pan Spatial Plane**: Click and drag with Right Mouse Button (or Shift + Left Click).
+                - **Zoom In / Out**: Rotate Mouse Scroll Wheel.
+                - **Camera Presets**: Click top-right buttons (**Isometric 3D**, **Front Elevation**, **Top Plan**, **Walkthrough**).
+                - **Live Equipment HUD**: Hover or click directly on any vessel to pop up its thermodynamic telemetry ($T, P, F, Q, W$) and mechanical dimensions.
+                - **Piping Color Code**: 🟡 **Vapor / Gas** (Amber), 🔴 **Hot Process Liquid** (Crimson), 🔵 **Cold Process Stream** (Cyan), 🟢 **Slurry / Solids** (Emerald).
+                """)
+
+        # =========================================================================
+        # SUB-MODULE 2: VIRTUAL DCS OPERATOR CONSOLE
+        # =========================================================================
+        elif dt_submode == "🎮 Virtual DCS Operator Console & Multi-Loop Faceplates":
+            st.write("#### 🎮 Virtual Distributed Control System (DCS) Operator Console")
+            st.markdown("""
+                *Emulates industrial DCS operator consoles (Emerson DeltaV / Honeywell Experion / Yokogawa Centum). Supports closed-loop PID control (**AUTO**), manual valve output override (**MANUAL**), master-slave setpoint tracking (**CASCADE**), and 4-tier safety trip alarms ($HH, H, L, LL$).*
+            """)
+
+            # 5 KPI Metric Cards
+            k1, k2, k3, k4, k5 = st.columns(5)
+            with k1:
+                st.metric("Total Control Loops", dt_summary["total_control_loops"])
+            with k2:
+                st.metric("Active Safety Trips", dt_summary["active_alarms_count"], delta_color="inverse")
+            with k3:
+                st.metric("DCS Scan Rate", "100 ms (10 Hz)")
+            with k4:
+                st.metric("Controller Hierarchy", "ISA-88 / ISA-95 Level 2")
+            with k5:
+                st.metric("DCS Integrity Status", "NORMAL" if dt_summary["active_alarms_count"] == 0 else "WARNING - ACTIVE ALARM")
+
+            # Annunciator Alarm Banner
+            if dt_summary["active_alarms_count"] > 0:
+                st.markdown("""
+                <div style="background-color: #fee2e2; border-left: 5px solid #ef4444; padding: 12px 16px; border-radius: 6px; margin-bottom: 16px;">
+                    <b style="color: #991b1b; font-size: 1.05rem;">🚨 DCS ALARM ANNUNCIATOR: ACTIVE SAFETY TRIPS DETECTED</b>
+                    <p style="color: #b91c1c; margin: 4px 0 0 0; font-size: 0.9rem;">One or more process variables have exceeded High-High (HH) or Low-Low (LL) emergency safety interlock thresholds.</p>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown("""
+                <div style="background-color: #ecfdf5; border-left: 5px solid #10b981; padding: 10px 14px; border-radius: 6px; margin-bottom: 16px;">
+                    <b style="color: #065f46; font-size: 0.95rem;">✅ DCS Annunciator Normal: All loops operating within allowable safety envelopes.</b>
+                </div>
+                """, unsafe_allow_html=True)
+
+            if len(dt_faceplates) == 0:
+                st.info("No active equipment placed in the flowsheet to generate DCS loops.")
+            else:
+                # Loop selector
+                loop_ids = [fp.loop_id for fp in dt_faceplates]
+                sel_loop_id = st.selectbox("Select Active DCS Controller Faceplate", loop_ids, key="dcs_loop_selector")
+                cur_fp = next((fp for fp in dt_faceplates if fp.loop_id == sel_loop_id), dt_faceplates[0])
+
+                f_col1, f_col2 = st.columns([1.1, 1.9])
+                with f_col1:
+                    st.markdown(f"##### 🎛️ Faceplate: `{cur_fp.loop_id}`")
+                    st.caption(f"{cur_fp.name} | Unit: {cur_fp.unit_id}")
+
+                    # Mode selector
+                    new_mode = st.radio("Controller Mode", ["AUTO", "MANUAL", "CASCADE"], index=["AUTO", "MANUAL", "CASCADE"].index(cur_fp.mode), horizontal=True, key=f"mode_sel_{cur_fp.loop_id}")
+                    cur_fp.set_mode(new_mode)
+
+                    # Setpoint slider
+                    new_sp = st.slider(f"Setpoint SP ({cur_fp.units})", float(cur_fp.pv_min), float(cur_fp.pv_max), float(cur_fp.sp), 0.5, key=f"sp_slider_{cur_fp.loop_id}")
+                    cur_fp.set_sp(new_sp)
+
+                    # Manual MV slider
+                    if cur_fp.mode == "MANUAL":
+                        new_mv = st.slider("Manipulated Variable MV (0-100%)", 0.0, 100.0, float(cur_fp.mv), 1.0, key=f"mv_slider_{cur_fp.loop_id}")
+                        cur_fp.set_mv(new_mv)
+                    else:
+                        st.info(f"🔒 Closed-Loop PID Active. Output MV: **{cur_fp.mv:.1f}%**")
+                        # Run a PID step
+                        cur_fp.execute_pid_step(dt_sec=1.0)
+
+                    # Alarm Ack
+                    if cur_fp.alarm_state != "NORMAL":
+                        if st.button("🔔 Acknowledge Alarm (ACK)", key=f"ack_btn_{cur_fp.loop_id}"):
+                            cur_fp.acknowledge_alarm()
+                            st.success("Alarm acknowledged by operator.")
+                            st.rerun()
+
+                    # Faceplate metric bars
+                    st.markdown(f"""
+                    <div style="background:#1e293b; padding:12px; border-radius:6px; margin-top:10px; color:#f8fafc; font-size:13px;">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                            <span>Process Variable (PV):</span><b>{cur_fp.pv:.2f} {cur_fp.units}</b>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                            <span>Setpoint (SP):</span><b>{cur_fp.sp:.2f} {cur_fp.units}</b>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                            <span>Manipulated Output (MV):</span><b>{cur_fp.mv:.1f} %</b>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                            <span>Alarm Status:</span><b style="color:{'#ef4444' if cur_fp.active_alarm else '#10b981'};">{cur_fp.alarm_state} ({cur_fp.active_alarm or 'OK'})</b>
+                        </div>
+                        <div style="display:flex; justify-content:space-between;">
+                            <span>Limits (LL / L / H / HH):</span><span>{cur_fp.ll_limit} / {cur_fp.l_limit} / {cur_fp.h_limit} / {cur_fp.hh_limit}</span>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                with f_col2:
+                    st.markdown("##### 📈 Real-Time Process Variable & Setpoint Trend")
+                    # Generate transient trend around SP
+                    time_pts = np.linspace(-60.0, 0.0, 61)
+                    # Simulated dynamic response approaching SP
+                    pv_trend = cur_fp.sp + (cur_fp.pv - cur_fp.sp) * np.exp(-abs(time_pts) / 15.0) + np.random.normal(0.0, 0.15, len(time_pts))
+
+                    fig_dcs = go.Figure()
+                    # Limit zones
+                    fig_dcs.add_hrect(y0=cur_fp.hh_limit, y1=cur_fp.pv_max, fillcolor="rgba(239, 68, 68, 0.15)", line_width=0, annotation_text="HH Trip Zone")
+                    fig_dcs.add_hrect(y0=cur_fp.pv_min, y1=cur_fp.ll_limit, fillcolor="rgba(239, 68, 68, 0.15)", line_width=0, annotation_text="LL Trip Zone")
+                    fig_dcs.add_hline(y=cur_fp.h_limit, line_dash="dash", line_color="#f59e0b", annotation_text="H Warning")
+                    fig_dcs.add_hline(y=cur_fp.l_limit, line_dash="dash", line_color="#f59e0b", annotation_text="L Warning")
+
+                    fig_dcs.add_trace(go.Scatter(x=time_pts, y=pv_trend, mode="lines", name=f"PV ({cur_fp.units})", line=dict(color="#38bdf8", width=3)))
+                    fig_dcs.add_trace(go.Scatter(x=time_pts, y=[cur_fp.sp]*len(time_pts), mode="lines", name="SP (Setpoint)", line=dict(color="#10b981", width=2, dash="dash")))
+
+                    fig_dcs.update_layout(
+                        title=f"<b>DCS Strip Chart: {cur_fp.loop_id} ({cur_fp.name})</b>",
+                        xaxis_title="Time Relative to Now (seconds)",
+                        yaxis_title=f"{cur_fp.loop_type} ({cur_fp.units})",
+                        yaxis_range=[cur_fp.pv_min, cur_fp.pv_max],
+                        height=380,
+                        margin=dict(l=20, r=20, t=50, b=20)
+                    )
+                    st.plotly_chart(fig_dcs, use_container_width=True)
+
+        # =========================================================================
+        # SUB-MODULE 3: OPC-UA TAG HISTORIAN & SCADA SERVER
+        # =========================================================================
+        elif dt_submode == "🌐 OPC-UA Tag Historian & SCADA Server":
+            st.write("#### 🌐 IEC 62541 OPC-UA Address Space & Live SCADA Server")
+            st.markdown("""
+                *Provides an industry-standard OPC-UA tag telemetry server architecture. Every flowsheet variable is assigned a deterministic NodeId (`ns=2;s=Plant.{Unit}.{Tag}`), data type, engineering units, quality status (`Good`), and ISO timestamp.*
+            """)
+
+            # 5 KPI Metric Cards
+            s1, s2, s3, s4, s5 = st.columns(5)
+            s1.metric("OPC-UA Namespace", "ns=2 (Process Plant)")
+            s2.metric("Total Nodes Registered", dt_summary["total_tags_count"])
+            s3.metric("Protocol Standard", "IEC 62541-6 (UANodeSet)")
+            s4.metric("Data Quality", "100% Good")
+            s5.metric("SCADA Historian Export", "CSV / XML Ready")
+
+            # Tag Filter Search
+            search_tag = st.text_input("🔍 Search / Filter Tags (by Unit ID or Name)", "", key="opcua_search_input")
+            filtered_tags = dt_tags
+            if search_tag:
+                filtered_tags = [t for t in dt_tags if search_tag.lower() in t["node_id"].lower() or search_tag.lower() in t["browse_name"].lower()]
+
+            st.write(f"##### 📋 Active OPC-UA Address Space Nodes ({len(filtered_tags)} of {len(dt_tags)})")
+            st.dataframe(filtered_tags, use_container_width=True)
+
+            # Export Buttons
+            ec1, ec2 = st.columns(2)
+            with ec1:
+                csv_tags = dt_registry.export_tag_csv()
+                st.download_button(
+                    label="📑 Download SCADA Tag Registry (CSV)",
+                    data=csv_tags,
+                    file_name="scada_tag_registry.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+            with ec2:
+                xml_nodeset = dt_registry.export_nodeset_xml()
+                st.download_button(
+                    label="📑 Download IEC 62541 OPC-UA NodeSet (XML)",
+                    data=xml_nodeset,
+                    file_name="opcua_nodeset.xml",
+                    mime="text/xml",
+                    use_container_width=True
+                )
+
+        # =========================================================================
+        # SUB-MODULE 4: PREDICTIVE MAINTENANCE & HEALTH DIAGNOSTICS
+        # =========================================================================
+        elif dt_submode == "🛠️ Predictive Maintenance & Health Diagnostics":
+            st.write("#### 🛠️ Equipment Health, Degradation & Predictive Maintenance")
+            st.markdown("""
+                *Monitors real-time operational deviations against thermodynamic design benchmarks to predict equipment degradation: heat exchanger thermal fouling ($R_f$), pump cavitation ($NPSH_a$ vs. $NPSH_r$), and column tray hydraulic stability.*
+            """)
+
+            # 5 KPI Metric Cards
+            pk1, pk2, pk3, pk4, pk5 = st.columns(5)
+            hex_list = dt_health["heat_exchangers"]
+            p_list = dt_health["pumps"]
+            col_list = dt_health["columns"]
+
+            pk1.metric("Monitored Equipment", len(hex_list) + len(p_list) + len(col_list))
+            pk2.metric("Heat Exchangers", len(hex_list))
+            pk3.metric("Centrifugal Pumps", len(p_list))
+            pk4.metric("Distillation Columns", len(col_list))
+            pk5.metric("Critical Alerts", dt_summary["critical_equipment_count"], delta_color="inverse")
+
+            # 1. Heat Exchanger Fouling Section
+            st.write("##### ❄️ Heat Exchanger Thermal Fouling Diagnostics ($R_f$)")
+            if hex_list:
+                st.dataframe(hex_list, use_container_width=True)
+            else:
+                st.info("No heat exchangers, heaters, or coolers in flowsheet.")
+
+            # 2. Pump Cavitation Diagnostics
+            st.write("##### 🌀 Centrifugal Pump NPSH & Cavitation Monitoring")
+            if p_list:
+                st.dataframe(p_list, use_container_width=True)
+            else:
+                st.info("No pump units in flowsheet.")
+
+            # 3. Distillation Column Hydraulics
+            st.write("##### 🏛️ Distillation Column Hydraulic Stability (Weeping & Flooding)")
+            if col_list:
+                st.dataframe(col_list, use_container_width=True)
+            else:
+                st.info("No column units in flowsheet.")
+
+            # Overall Plant Health Radar Chart
+            st.write("##### 📊 Plant Equipment Integrity Radar Benchmark")
+            cats = ["Thermal Heat Transfer", "Pump Hydraulic Margin", "Column Vapor Capacity", "Safety Envelope", "DCS Controller Stability"]
+            scores = [88.0, 92.0, 85.0, 95.0, 90.0]
+            if dt_summary["critical_equipment_count"] > 0:
+                scores[0] = 65.0
+                scores[3] = 70.0
+
+            fig_radar = go.Figure()
+            fig_radar.add_trace(go.Scatterpolar(
+                r=scores + [scores[0]],
+                theta=cats + [cats[0]],
+                fill="toself",
+                fillcolor="rgba(56, 189, 248, 0.25)",
+                line=dict(color="#38bdf8", width=2),
+                name="Plant Health Score"
+            ))
+            fig_radar.update_layout(
+                polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
+                showlegend=False,
+                height=380,
+                margin=dict(l=40, r=40, t=30, b=30)
+            )
+            st.plotly_chart(fig_radar, use_container_width=True)
