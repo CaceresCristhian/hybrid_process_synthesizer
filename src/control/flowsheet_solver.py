@@ -811,3 +811,103 @@ class FlowsheetSolver:
                 "critical_equipment_count": critical_equipment_count
             }
         }
+
+    @classmethod
+    def compile_flowsheet_deliverables(cls, units_list: Any, streams_list: Any = None,
+                                       connections: Optional[list] = None,
+                                       title_data: Any = None,
+                                       jurisdiction: str = "DUAL") -> Dict[str, Any]:
+        """
+        Compiles comprehensive engineering deliverables and regulatory compliance records
+        conforming to DIN EN ISO 10628, DIN EN ISO 7200, PED 2014/68/EU, and OSHA 1910.119.
+        """
+        from src.reporting.regulatory_standards import (
+            TitleBlockData, PEDClassifier, OSHAPSIChecker, RegulatoryStandards
+        )
+
+        # Convert to dictionary maps if needed
+        units_map = {}
+        if isinstance(units_list, dict):
+            units_map = units_list
+        elif isinstance(units_list, (list, tuple)):
+            for idx, u in enumerate(units_list):
+                uid = getattr(u, "unit_id", getattr(u, "name", f"UNIT-{idx+1}"))
+                units_map[uid] = u
+
+        streams_map = {}
+        if isinstance(streams_list, dict):
+            streams_map = streams_list
+        elif isinstance(streams_list, (list, tuple)):
+            for idx, st in enumerate(streams_list):
+                sid = getattr(st, "name", f"S-{idx+1:02d}")
+                streams_map[sid] = st
+
+        tb = title_data or TitleBlockData()
+        tb.jurisdiction = jurisdiction
+
+        # 1. PED 2014/68/EU Classifications
+        ped_evaluations = []
+        ped_cat_counts = {"SEP": 0, "Category I": 0, "Category II": 0, "Category III": 0, "Category IV": 0}
+        ce_count = 0
+
+        # Scan for flammable / dangerous chemicals in streams
+        comp_names = set()
+        for st in streams_map.values():
+            if hasattr(st, "z") and st.z:
+                comp_names.update(st.z.keys())
+
+        fluid_group = 1 if any(c.lower() in PEDClassifier.GROUP_1_CHEMICALS for c in comp_names) else 2
+
+        for uid, u in units_map.items():
+            utype = u.__class__.__name__ if hasattr(u, "__class__") else str(u.get("type", "Unit"))
+            ps_bar = getattr(u, "design_pressure", 101325.0) / 100000.0
+            sizing = getattr(u, "sizing_results", {}) or {}
+            vol_m3 = sizing.get("volume_m3", 2.0)
+            is_gas = "Column" in utype or "Separator" in utype or "Compressor" in utype or "Dryer" in utype
+
+            eval_res = PEDClassifier.classify_vessel(ps_bar, vol_m3, fluid_group, is_gas)
+            eval_res["unit_id"] = uid
+            eval_res["unit_type"] = utype
+            eval_res["unit_name"] = getattr(u, "name", uid)
+            ped_evaluations.append(eval_res)
+
+            cat = eval_res["category"]
+            if cat in ped_cat_counts:
+                ped_cat_counts[cat] += 1
+            if eval_res["ce_marking_required"]:
+                ce_count += 1
+
+        # 2. OSHA 1910.119 Process Technology Envelopes
+        tech_envelopes = []
+        for uid, u in units_map.items():
+            utype = u.__class__.__name__ if hasattr(u, "__class__") else str(u.get("type", "Unit"))
+            des_p = getattr(u, "design_pressure", 101325.0) / 100000.0
+            envelope = OSHAPSIChecker.compile_technology_envelope(uid, utype, 80.0, des_p * 0.7, des_p)
+            tech_envelopes.append(envelope)
+
+        # 3. Chemical Hazards
+        chem_hazards = OSHAPSIChecker.compile_chemical_hazards(list(comp_names) or ["methane", "water", "ethanol"])
+
+        # 4. Filter Applicable Standards
+        applicable_standards = RegulatoryStandards.filter_by_jurisdiction(jurisdiction)
+
+        return {
+            "title_data": tb,
+            "units_map": units_map,
+            "streams_map": streams_map,
+            "connections": connections or [],
+            "ped_evaluations": ped_evaluations,
+            "osha_technology_envelopes": tech_envelopes,
+            "chemical_hazards": chem_hazards,
+            "applicable_standards": applicable_standards,
+            "summary": {
+                "total_units": len(units_map),
+                "total_streams": len(streams_map),
+                "fluid_group": fluid_group,
+                "ped_category_counts": ped_cat_counts,
+                "ce_mark_required_count": ce_count,
+                "osha_psm_covered": fluid_group == 1,
+                "standards_count": len(applicable_standards),
+                "governing_jurisdiction": jurisdiction
+            }
+        }

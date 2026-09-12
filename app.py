@@ -51,6 +51,10 @@ from src.control.digital_twin import (
     OPCUANode, OPCUATagRegistry, DCSControllerFaceplate, EquipmentHealthMonitor
 )
 from src.visualization.plant_3d_viewer import Plant3DViewer
+from src.reporting.regulatory_standards import (
+    TitleBlockData, RegulatoryStandards, PEDClassifier, OSHAPSIChecker
+)
+from src.reporting.pdf_generator import PDFReportGenerator
 
 # Force Streamlit to reload modified submodules to prevent caching errors on Streamlit Cloud
 import importlib
@@ -126,6 +130,10 @@ importlib.reload(src.chemical_phenomena.pc_saft)
 importlib.reload(src.units.solids)
 importlib.reload(src.control.digital_twin)
 importlib.reload(src.visualization.plant_3d_viewer)
+import src.reporting.regulatory_standards
+import src.reporting.pdf_generator
+importlib.reload(src.reporting.regulatory_standards)
+importlib.reload(src.reporting.pdf_generator)
 
 # Page Config
 st.set_page_config(
@@ -1337,7 +1345,7 @@ elif simulation_mode == "Interactive Flowsheet Designer":
     mapped_sp = {sp.id: sp for sp in [species_map[k] for k in st.session_state.fs_species]}
 
     # RENDER INTERACTIVE TABS
-    tab_pid, tab_mass, tab_energy, tab_vle, tab_econ, tab_dynamic, tab_pinch, tab_lca, tab_safety, tab_opt, tab_solids, tab_dtwin = st.tabs([
+    tab_pid, tab_mass, tab_energy, tab_vle, tab_econ, tab_dynamic, tab_pinch, tab_lca, tab_safety, tab_opt, tab_solids, tab_dtwin, tab_deliverables = st.tabs([
         "Flowsheet Canvas & P&ID", 
         "Mass Balance Summary", 
         "Energy Balance Summary", 
@@ -1349,7 +1357,8 @@ elif simulation_mode == "Interactive Flowsheet Designer":
         "Process Safety & HAZOP Engineering",
         "Superstructure Synthesis & Pareto Optimization",
         "Advanced Thermodynamics & Solids Processing",
-        "Industrial Digital Twin & 3D Spatial Plant"
+        "Industrial Digital Twin & 3D Spatial Plant",
+        "Engineering Deliverables & Regulatory Documentation"
     ])
     
     with tab_pid:
@@ -3971,3 +3980,293 @@ elif simulation_mode == "Interactive Flowsheet Designer":
                 margin=dict(l=40, r=40, t=30, b=30)
             )
             st.plotly_chart(fig_radar, use_container_width=True)
+
+
+    # =========================================================================
+    # TAB 13: ENGINEERING DELIVERABLES & REGULATORY DOCUMENTATION STUDIO
+    # =========================================================================
+    with tab_deliverables:
+        st.write("### 📜 Engineering Deliverables & Regulatory Documentation Studio")
+        st.markdown("""
+            *Synthesizes formal engineering deliverables (vector PDFs, printable HTML packages, and VDI 2770 JSON datasets) conforming to official statutory regulations and engineering standards in **Germany (DIN / VDI / BImSchG)**, the **European Union (EN / ISO / PED 2014/68/EU)**, and the **United States (ANSI / ASME / ISA / OSHA / API / TEMA)**.*
+        """)
+
+        # Compile deliverables data
+        fs_deliv = FlowsheetSolver.compile_flowsheet_deliverables(
+            units_list=st.session_state.fs_units,
+            streams_list=st.session_state.fs_streams,
+            connections=st.session_state.fs_connections,
+            jurisdiction="DUAL"
+        )
+        deliv_summary = fs_deliv["summary"]
+        deliv_tb = fs_deliv["title_data"]
+
+        deliv_submode = st.radio(
+            "Select Deliverables & Regulatory Module",
+            [
+                "📑 Official Deliverable Document Generator (PDF / HTML / VDI)",
+                "🇪🇺 European & German Regulatory Dossier (PED 2014/68/EU & BImSchG)",
+                "🇺🇸 US Standards & OSHA 1910.119 PSM / ASME BPVC Compliance",
+                "📚 Official Standards & Regulatory Knowledge Base"
+            ],
+            horizontal=True,
+            key="deliv_submode_rad"
+        )
+
+        # =========================================================================
+        # SUB-MODULE 1: OFFICIAL DELIVERABLE DOCUMENT GENERATOR
+        # =========================================================================
+        if deliv_submode == "📑 Official Deliverable Document Generator (PDF / HTML / VDI)":
+            st.write("#### 📑 Official Engineering Deliverable Generator & Export Hub")
+            st.markdown("""
+                *Select an engineering deliverable template and governing jurisdiction to compile standard-compliant documentation. Documents feature DIN EN ISO 7200 / ASME Y14 title blocks, Heat & Material Balances, vector PFD drawings, equipment data sheets, and regulatory conformity sign-offs.*
+            """)
+
+            # Metadata customizer in an expander
+            with st.expander("⚙️ Customize Project Metadata & Title Block (DIN EN ISO 7200 / ASME Y14)", expanded=False):
+                col_m1, col_m2, col_m3 = st.columns(3)
+                custom_proj = col_m1.text_input("Project Title", value="Process Plant Synthesis & Decarbonization Study", key="meta_proj")
+                custom_plant = col_m2.text_input("Plant / Facility Name", value="Chemical Processing Complex Alpha", key="meta_plant")
+                custom_doc_no = col_m3.text_input("Document Number", value="HPS-FEED-DWG-001", key="meta_doc_no")
+
+                col_m4, col_m5, col_m6 = st.columns(3)
+                custom_client = col_m4.text_input("Client / Operating Company", value="Global Chemical Industries AG", key="meta_client")
+                custom_contractor = col_m5.text_input("Engineering Contractor", value="Hybrid Process Engineering GmbH", key="meta_contractor")
+                custom_rev = col_m6.selectbox("Revision Index", ["0 (Issued for Design)", "A (Preliminary FEED)", "B (Client Review)", "C (Final Approval)"], key="meta_rev")
+
+                col_m7, col_m8, col_m9 = st.columns(3)
+                custom_drawn = col_m7.text_input("Lead Process Engineer (Drawn)", value="Cristhian Caceres, M.Sc.", key="meta_drawn")
+                custom_checked = col_m8.text_input("Lead Technical Reviewer (Checked)", value="Dr.-Ing. Process Lead", key="meta_checked")
+                custom_approved = col_m9.text_input("Project Director (Approved)", value="VP Process Engineering", key="meta_approved")
+
+            tb_active = TitleBlockData(
+                project_title=custom_proj,
+                plant_name=custom_plant,
+                document_number=custom_doc_no,
+                revision=custom_rev[:1],
+                client_name=custom_client,
+                contractor_name=custom_contractor,
+                drawn_by=custom_drawn,
+                checked_by=custom_checked,
+                approved_by=custom_approved
+            )
+
+            # Template Selector & Jurisdiction
+            col_t1, col_t2 = st.columns([3, 2])
+            template_options = {
+                "pfd_stream": "1. Process Flow Diagram (PFD) & Stream Balance (DIN EN ISO 10628 / ASME Y14)",
+                "equipment_datasheets": "2. Major Equipment Specification Data Sheets (ASME Sec VIII / TEMA / API 660)",
+                "ped_eu_dossier": "3. European Regulatory Dossier & CE Conformity (PED 2014/68/EU)",
+                "osha_psi": "4. US OSHA 1910.119 Process Safety Information (PSI) Dossier",
+                "feed_master": "5. Front-End Engineering Design (FEED) Comprehensive Executive Master Deliverable"
+            }
+            selected_tid = col_t1.selectbox(
+                "Select Deliverable Template",
+                list(template_options.keys()),
+                format_func=lambda k: template_options[k],
+                key="sel_template_box"
+            )
+            selected_jur = col_t2.selectbox(
+                "Governing Regulatory Jurisdiction",
+                ["Dual International (DIN/EN/ISO + ASME/OSHA)", "Germany (DIN / VDI / BImSchG)", "European Union (EN / ISO / PED 2014/68/EU)", "United States (ANSI / ASME / ISA / OSHA)"],
+                key="sel_jur_box"
+            )
+
+            # Build documents dynamically
+            pdf_bytes = PDFReportGenerator.build_document(
+                template_id=selected_tid,
+                units_map=st.session_state.fs_units,
+                streams_map=st.session_state.fs_streams,
+                connections=st.session_state.fs_connections,
+                mass_bal=st.session_state.get("fs_mass_balance", {}),
+                energy_bal=st.session_state.get("fs_energy_balance", {}),
+                tea_summary=st.session_state.get("fs_tea_summary", {}),
+                title_data=tb_active
+            )
+
+            html_doc = ReportGenerator.generate_deliverable_html(
+                template_id=selected_tid,
+                units_map=st.session_state.fs_units,
+                streams_map=st.session_state.fs_streams,
+                connections=st.session_state.fs_connections,
+                mass_bal=st.session_state.get("fs_mass_balance", {}),
+                energy_bal=st.session_state.get("fs_energy_balance", {}),
+                tea_summary=st.session_state.get("fs_tea_summary", {}),
+                title_data=tb_active,
+                jurisdiction=selected_jur
+            )
+
+            json_dossier = ReportGenerator.export_flowsheet_json(
+                units_map=st.session_state.fs_units,
+                streams_map=st.session_state.fs_streams,
+                connections_list=st.session_state.fs_connections,
+                metadata={
+                    "project": custom_proj,
+                    "facility": custom_plant,
+                    "doc_no": custom_doc_no,
+                    "template": selected_tid,
+                    "jurisdiction": selected_jur
+                }
+            )
+
+            # Download Hub Cards
+            st.write("##### 📥 Export Official Deliverables")
+            d_col1, d_col2, d_col3 = st.columns(3)
+            d_col1.download_button(
+                label="📄 Download Official PDF Document",
+                data=pdf_bytes,
+                file_name=f"{custom_doc_no}_{selected_tid}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
+            d_col2.download_button(
+                label="🌐 Download Printable HTML Package",
+                data=html_doc,
+                file_name=f"{custom_doc_no}_{selected_tid}.html",
+                mime="text/html",
+                use_container_width=True
+            )
+            d_col3.download_button(
+                label="💾 Download VDI 2770 / JSON Data Package",
+                data=json_dossier,
+                file_name=f"{custom_doc_no}_data_package.json",
+                mime="application/json",
+                use_container_width=True
+            )
+
+            st.success(f"Generated official deliverable: **{template_options[selected_tid]}** ({len(pdf_bytes):,} PDF bytes, {len(html_doc):,} HTML bytes).")
+
+            # Live In-App Document Preview
+            st.write("##### 👁️ Live Deliverable Preview")
+            components.html(html_doc, height=550, scrolling=True)
+
+        # =========================================================================
+        # SUB-MODULE 2: EUROPEAN & GERMAN REGULATORY DOSSIER (PED 2014/68/EU & BIMSCHG)
+        # =========================================================================
+        elif deliv_submode == "🇪🇺 European & German Regulatory Dossier (PED 2014/68/EU & BImSchG)":
+            st.write("#### 🇪🇺 European Union & German Statutory Regulatory Dossier")
+            st.markdown("""
+                *Statutory conformity verification under the **European Pressure Equipment Directive (PED 2014/68/EU)** and the German **Betriebssicherheitsverordnung (BetrSichV)**. Automatically computes fluid groups, pressure-volume products ($PS \times V$), hazard categories (SEP to IV), and required Notified Body CE conformity assessment modules.*
+            """)
+
+            # 5 KPI Metric Cards
+            ped_counts = deliv_summary["ped_category_counts"]
+            k1, k2, k3, k4, k5 = st.columns(5)
+            k1.metric("Monitored Pressure Vessels", deliv_summary["total_units"])
+            k2.metric("Fluid Hazard Classification", f"Group {deliv_summary['fluid_group']}")
+            k3.metric("Category III / IV High Hazard", ped_counts.get("Category III", 0) + ped_counts.get("Category IV", 0))
+            k4.metric("Mandatory CE Mark Required", deliv_summary["ce_mark_required_count"])
+            k5.metric("Sound Engineering Practice (SEP)", ped_counts.get("SEP", 0))
+
+            # Interactive PED Classification Table
+            st.write("##### 📋 PED 2014/68/EU Annex II Hazard Category Matrix")
+            ped_data = fs_deliv["ped_evaluations"]
+            if ped_data:
+                disp_ped = []
+                for p in ped_data:
+                    disp_ped.append({
+                        "Tag": p["unit_id"],
+                        "Service": p["unit_name"],
+                        "PS (bar g)": f"{p['ps_bar']:.2f}",
+                        "Volume (L)": f"{p['volume_liters']:.0f}",
+                        "PS × V (bar·L)": f"{p['ps_x_v_bar_L']:.0f}",
+                        "Fluid State": p["fluid_state"],
+                        "Hazard Category": p["category"],
+                        "CE Mark": "Required (CE 0036)" if p["ce_marking_required"] else "Not Permitted (SEP)",
+                        "Conformity Route": p["recommended_modules"][0]
+                    })
+                st.dataframe(disp_ped, use_container_width=True)
+
+            # Essential Safety Requirements & German BetrSichV
+            c_esr1, c_esr2 = st.columns(2)
+            with c_esr1:
+                st.write("##### 🛡️ PED Annex I Essential Safety Requirements (ESR)")
+                st.markdown(r"""
+                * **ESR 2.1 (Design Strength)**: Wall thickness computed according to **EN 13445-3** with $f_{\mathrm{allow}}$ design stress.
+                * **ESR 2.10 (Overpressure Relief)**: Full-flow relief capacity sized per **EN ISO 4126-1** and API 520.
+                * **ESR 3.1.2 (Welding / Joining)**: Qualified welding procedures (WPQR) conforming to **EN ISO 15614-1**.
+                * **ESR 3.2.2 (Hydrostatic Proof Test)**: Minimum test pressure $P_t = 1.43 \times PS$ without plastic deformation.
+                * **ESR 4.1 (Material Certification)**: Inspection certificate **EN 10204 Type 3.1** with chemical & impact test logs.
+                """)
+            with c_esr2:
+                st.write("##### 🇩🇪 German BetrSichV & TA Luft Air Emissions")
+                st.markdown(r"""
+                * **Betriebssicherheitsverordnung (BetrSichV § 15/16)**: Periodic recurring inspection class assigned. Requires ZÜS inspection (TÜV/DEKRA) before commissioning for Category II–IV.
+                * **BImSchG / TA Luft 2021**: Off-gas total organic carbon emissions must remain $< 20\ \mathrm{mg/m^3}$.
+                * **DIN EN ISO 10628 Compliance**: Flowsheet drafting symbols and line weights meet VDI/DIN guidelines.
+                * **DIN EN IEC 81346 Reference Tagging**: Object-oriented tagging structure supported (`=PLANT+SYS-UNIT`).
+                """)
+
+        # =========================================================================
+        # SUB-MODULE 3: US STANDARDS & OSHA 1910.119 PSM / ASME BPVC
+        # =========================================================================
+        elif deliv_submode == "🇺🇸 US Standards & OSHA 1910.119 PSM / ASME BPVC Compliance":
+            st.write("#### 🇺🇸 United States Standards & OSHA Process Safety Management")
+            st.markdown(r"""
+                *Fulfills the statutory mandates of **OSHA 29 CFR 1910.119 (Process Safety Management of Highly Hazardous Chemicals)**, **ASME Boiler and Pressure Vessel Code (BPVC) Section VIII Div 1**, **ANSI/ISA-5.1**, and **API Standards 520/526/660**.*
+            """)
+
+            # 5 KPI Metric Cards
+            psm_covered = deliv_summary["osha_psm_covered"]
+            u1, u2, u3, u4, u5 = st.columns(5)
+            u1.metric("OSHA PSM Status", "Covered Facility" if psm_covered else "Non-Covered", delta="29 CFR 1910.119")
+            u2.metric("Hazardous Chemical Species", len(fs_deliv["chemical_hazards"]))
+            u3.metric("ASME Sec VIII Vessels", deliv_summary["total_units"])
+            u4.metric("API 520/526 Relief Points", len(st.session_state.fs_units))
+            u5.metric("ISA-5.1 Loops Tracked", deliv_summary["total_streams"])
+
+            # 1. Chemical Hazards Table
+            st.write("##### 🧪 OSHA 1910.119(d)(1) Information Pertaining to Chemical Hazards")
+            st.dataframe(fs_deliv["chemical_hazards"], use_container_width=True)
+
+            # 2. Process Technology Safe Operating Limits
+            st.write("##### 🛡️ OSHA 1910.119(d)(2) Process Technology Safe Operating Limits")
+            st.dataframe(fs_deliv["osha_technology_envelopes"], use_container_width=True)
+
+            # 3. ASME Section VIII & API 660 / TEMA Standards
+            st.write("##### 🏭 ASME BPVC Section VIII Form U-1A & TEMA Equipment Design Basis")
+            st.markdown(r"""
+                * **ASME Section VIII Div 1**: All unfired pressure vessels operating $> 15\ \mathrm{psig}$ are designed with joint efficiency $E = 0.85$ (Spot Radiography RT-3) and minimum design metal temperature (MDMT) $-29^\circ\mathrm{C}$.
+                * **ASME B31.3 Process Piping**: Pipe schedules (Sch 40/80) sized for Category D/Normal fluid service.
+                * **API 660 / TEMA Standards**: Shell-and-tube heat exchangers classified by front head, shell, and rear head (e.g. TEMA AES, BEM).
+                * **ANSI/ISA-5.1**: Instrument bubble tagging follows standard ISA format (e.g. `TIC-101`, `PIC-102`, `FIC-103`).
+            """)
+
+        # =========================================================================
+        # SUB-MODULE 4: OFFICIAL STANDARDS & REGULATORY KNOWLEDGE BASE
+        # =========================================================================
+        elif deliv_submode == "📚 Official Standards & Regulatory Knowledge Base":
+            st.write("#### 📚 Official Standards & Regulatory Knowledge Base")
+            st.markdown("""
+                *Search and explore official engineering standards and statutory regulations across Germany, the European Union, and the United States.*
+            """)
+
+            col_kf1, col_kf2 = st.columns([1, 2])
+            filter_region = col_kf1.selectbox(
+                "Filter by Jurisdiction",
+                ["All Jurisdictions", "Germany", "Europe", "USA"],
+                key="kb_filter_reg"
+            )
+            search_query = col_kf2.text_input("Search Standards by Code, Title, or Keyword", placeholder="e.g. 10628, ASME, PED, OSHA, TEMA...", key="kb_search_inp")
+
+            reg_key = "all" if "All" in filter_region else filter_region.lower()
+            std_list = RegulatoryStandards.filter_by_jurisdiction(reg_key)
+            if search_query:
+                std_list = [
+                    s for s in std_list
+                    if search_query.lower() in s["code"].lower() or search_query.lower() in s["title"].lower() or search_query.lower() in s["scope"].lower()
+                ]
+
+            st.write(f"Displaying **{len(std_list)}** matching official standards and statutory regulations:")
+
+            for s in std_list:
+                with st.expander(f"📌 {s['code']} — {s['title']}", expanded=False):
+                    c_a, c_b = st.columns([1, 2])
+                    with c_a:
+                        st.markdown(f"**Issuing Authority:** {s['authority']}")
+                        st.markdown(f"**Jurisdiction:** {s['jurisdiction']}")
+                        st.markdown(f"**Legal Status:** `{s['legal_status']}`")
+                    with c_b:
+                        st.markdown(f"**Scope & Applications:** {s['scope']}")
+                        st.markdown(f"**Mandatory Data Fields:** {', '.join(s['mandatory_fields'])}")
+
