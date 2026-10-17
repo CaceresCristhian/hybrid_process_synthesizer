@@ -162,5 +162,12 @@ class TestDynamicControlExport(unittest.TestCase):
         self.assertIn("Techno-Economic & Financial Profitability Summary", html_out)
         self.assertIn("CONSERVED (Pass)", html_out)
 
+    def test_dynamic_column_init_reflux_ratio_alias(self):
+        """Verify DynamicDistillationColumn accepts both reflux_ratio and nominal_reflux_ratio."""
+        col1 = DynamicDistillationColumn("C-101", "De-Ethanizer", reflux_ratio=3.2)
+        self.assertEqual(col1.reflux_ratio, 3.2)
+        col2 = DynamicDistillationColumn("C-102", "De-Ethanizer", nominal_reflux_ratio=2.8)
+        self.assertEqual(col2.reflux_ratio, 2.8)
+
 if __name__ == "__main__":
     unittest.main()

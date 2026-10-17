@@ -20,13 +20,15 @@ class DynamicDistillationColumn(BaseUnit):
 
     def __init__(self, unit_id: str, name: str, num_stages: int = 10, feed_stage: int = 5,
                  relative_volatility: float = 2.4, nominal_feed_flow: float = 10.0,
-                 nominal_reflux_ratio: float = 2.5):
+                 nominal_reflux_ratio: float = 2.5, reflux_ratio: Optional[float] = None, **kwargs):
         super().__init__(unit_id, name)
         self.num_stages = max(4, num_stages)
         self.feed_stage = max(2, min(self.num_stages - 1, feed_stage))
         self.alpha = relative_volatility
         self.nominal_feed_flow = nominal_feed_flow
-        self.reflux_ratio = nominal_reflux_ratio
+        actual_reflux = reflux_ratio if reflux_ratio is not None else nominal_reflux_ratio
+        self.reflux_ratio = actual_reflux
+        self.nominal_reflux_ratio = actual_reflux
 
         # Hydraulic and thermodynamic constants
         self.tau_liquid = 4.0      # Liquid hydraulic time constant (seconds)
