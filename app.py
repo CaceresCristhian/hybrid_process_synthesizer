@@ -200,7 +200,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Helper to render Mermaid inside Streamlit HTML component with full visibility & bottom-right controls
+# Helper to render Mermaid inside Streamlit HTML component with full visibility, zoom, pan & bottom-right controls
 def render_mermaid(code: str, height: int = 560):
     html = f"""
     <!DOCTYPE html>
@@ -214,6 +214,7 @@ def render_mermaid(code: str, height: int = 560):
                 margin: 0;
                 padding: 0;
                 font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+                overflow: hidden;
             }}
             .pid-wrapper {{
                 position: relative;
@@ -223,48 +224,41 @@ def render_mermaid(code: str, height: int = 560):
                 width: 100%;
                 height: {height - 16}px;
                 min-height: 320px;
-                resize: vertical;
                 overflow: auto;
                 display: flex;
-                justify-content: center;
-                align-items: center;
-                padding: 16px 16px 48px 16px;
+                padding: 20px 20px 56px 20px;
                 box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+                cursor: grab;
+                user-select: none;
+            }}
+            .pid-wrapper.dragging {{
+                cursor: grabbing;
             }}
             .mermaid {{
-                width: 100%;
-                height: 100%;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                transform-origin: center center;
-                transition: transform 0.15s ease;
+                margin: auto;
+                flex-shrink: 0;
+                display: inline-block;
             }}
             .mermaid svg {{
-                max-width: 100% !important;
-                max-height: 100% !important;
-                width: auto !important;
-                height: auto !important;
-            }}
-            .pid-Wrapper-scroll .mermaid svg {{
+                display: block;
                 max-width: none !important;
                 max-height: none !important;
             }}
             .pid-controls {{
-                position: absolute;
-                bottom: 8px;
-                right: 14px;
+                position: fixed;
+                bottom: 16px;
+                right: 22px;
                 display: flex;
                 align-items: center;
                 gap: 6px;
-                background: rgba(15, 23, 42, 0.92);
+                background: rgba(15, 23, 42, 0.94);
                 color: #f8fafc;
-                padding: 5px 10px;
+                padding: 6px 10px;
                 border-radius: 8px;
                 border: 1px solid #334155;
                 font-size: 12px;
-                z-index: 20;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+                z-index: 30;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.35);
             }}
             .pid-btn {{
                 background: #1e293b;
@@ -287,7 +281,7 @@ def render_mermaid(code: str, height: int = 560):
                 color: #ffffff;
                 border-color: #2dd4bf;
             }}
-            .resize-hint {{
+            .pan-hint {{
                 color: #94a3b8;
                 font-size: 11px;
                 margin-left: 4px;
@@ -300,78 +294,142 @@ def render_mermaid(code: str, height: int = 560):
             <div id="mermaidBox" class="mermaid">
                 {code}
             </div>
-            <div class="pid-controls" title="Use controls to fit complete P&ID or zoom, or drag bottom-right corner to resize">
-                <button id="btnFit" class="pid-btn active" onclick="setFitMode(true)">⛶ Fit Complete P&ID</button>
-                <button class="pid-btn" onclick="adjustZoom(-0.15)">🔍 −</button>
-                <span id="zoomLabel" style="min-width: 38px; text-align: center; font-weight: 600;">Fit</span>
-                <button class="pid-btn" onclick="adjustZoom(0.15)">🔍 +</button>
-                <button class="pid-btn" onclick="toggleTall()">⤢ Expand</button>
-                <span class="resize-hint">◢</span>
-            </div>
+        </div>
+        <div class="pid-controls" title="Use buttons to fit or zoom, and drag anywhere on the diagram or use scrollbars to pan">
+            <button id="btnFit" class="pid-btn active" onclick="setFitMode(true)">⛶ Fit Complete P&ID</button>
+            <button class="pid-btn" onclick="adjustZoom(-0.15)">🔍 −</button>
+            <span id="zoomLabel" style="min-width: 42px; text-align: center; font-weight: 600;">Fit</span>
+            <button class="pid-btn" onclick="adjustZoom(0.15)">🔍 +</button>
+            <button class="pid-btn" onclick="resetTop()">⬆ Top</button>
+            <span class="pan-hint">✋ Drag to Pan</span>
         </div>
         <script>
             mermaid.initialize({{ startOnLoad: true, theme: 'default', securityLevel: 'loose' }});
             let currentZoom = 1.0;
             let fitMode = true;
-            let tallMode = false;
+            let baseW = 0;
+            let baseH = 0;
 
-            function applySvgSizing() {{
-                const svg = document.querySelector('#mermaidBox svg');
-                if (!svg) return;
-                if (!svg.getAttribute('viewBox') && svg.getBBox) {{
-                    try {{
-                        const bbox = svg.getBBox();
-                        if (bbox.width > 0 && bbox.height > 0) {{
-                            svg.setAttribute('viewBox', `${{bbox.x - 10}} ${{bbox.y - 10}} ${{bbox.width + 20}} ${{bbox.height + 20}}`);
-                        }}
-                    }} catch(e) {{}}
+            function ensureNaturalSize(svg) {{
+                if (baseW > 0 && baseH > 0) return;
+                try {{
+                    const bbox = svg.getBBox();
+                    if (bbox && bbox.width > 0 && bbox.height > 0) {{
+                        baseW = bbox.width + 24;
+                        baseH = bbox.height + 24;
+                        svg.setAttribute('viewBox', `${{bbox.x - 12}} ${{bbox.y - 12}} ${{baseW}} ${{baseH}}`);
+                        return;
+                    }}
+                }} catch (e) {{}}
+                const vb = svg.getAttribute('viewBox');
+                if (vb) {{
+                    const parts = vb.trim().split(/[\\s,]+/).map(Number);
+                    if (parts.length === 4 && parts[2] > 0 && parts[3] > 0) {{
+                        baseW = parts[2];
+                        baseH = parts[3];
+                        return;
+                    }}
                 }}
+                baseW = svg.clientWidth || 700;
+                baseH = svg.clientHeight || 480;
+            }}
+
+            function applySvgSizing(scrollToTopAfterZoom = false) {{
+                const svg = document.querySelector('#mermaidBox svg');
+                const wrapper = document.getElementById('pidWrapper');
+                if (!svg || !wrapper) return;
+                ensureNaturalSize(svg);
+
+                const availW = Math.max(200, wrapper.clientWidth - 48);
+                const availH = Math.max(200, wrapper.clientHeight - 76);
+
                 if (fitMode) {{
-                    svg.style.maxWidth = '100%';
-                    svg.style.maxHeight = '100%';
-                    svg.style.width = 'auto';
-                    svg.style.height = 'auto';
-                    document.getElementById('mermaidBox').style.transform = 'scale(1)';
+                    const fitScale = Math.min(availW / baseW, availH / baseH, 1.35);
+                    svg.style.width = `${{Math.round(baseW * fitScale)}}px`;
+                    svg.style.height = `${{Math.round(baseH * fitScale)}}px`;
                     document.getElementById('zoomLabel').innerText = 'Fit';
                     document.getElementById('btnFit').classList.add('active');
+                    wrapper.scrollTop = 0;
+                    wrapper.scrollLeft = 0;
                 }} else {{
-                    svg.style.maxWidth = 'none';
-                    svg.style.maxHeight = 'none';
-                    document.getElementById('mermaidBox').style.transform = `scale(${{currentZoom}})`;
+                    const prevScrollH = wrapper.scrollHeight || 1;
+                    const prevScrollTop = wrapper.scrollTop;
+                    svg.style.width = `${{Math.round(baseW * currentZoom)}}px`;
+                    svg.style.height = `${{Math.round(baseH * currentZoom)}}px`;
                     document.getElementById('zoomLabel').innerText = `${{Math.round(currentZoom * 100)}}%`;
                     document.getElementById('btnFit').classList.remove('active');
+                    if (scrollToTopAfterZoom && prevScrollTop === 0) {{
+                        wrapper.scrollTop = 0;
+                    }}
                 }}
             }}
 
             function setFitMode(enable) {{
                 fitMode = enable;
                 if (enable) currentZoom = 1.0;
-                applySvgSizing();
+                applySvgSizing(true);
             }}
 
             function adjustZoom(delta) {{
-                fitMode = false;
-                currentZoom = Math.max(0.4, Math.min(2.5, currentZoom + delta));
-                applySvgSizing();
+                const wrapper = document.getElementById('pidWrapper');
+                if (fitMode) {{
+                    const svg = document.querySelector('#mermaidBox svg');
+                    if (svg && baseW > 0) {{
+                        currentZoom = (svg.clientWidth || baseW) / baseW;
+                    }} else {{
+                        currentZoom = 1.0;
+                    }}
+                    fitMode = false;
+                }}
+                currentZoom = Math.max(0.35, Math.min(3.0, currentZoom + delta));
+                applySvgSizing(true);
             }}
 
-            function toggleTall() {{
+            function resetTop() {{
                 const wrapper = document.getElementById('pidWrapper');
-                tallMode = !tallMode;
-                wrapper.style.height = tallMode ? '760px' : '{height - 16}px';
-                setTimeout(applySvgSizing, 50);
+                if (wrapper) {{
+                    wrapper.scrollTo({{ top: 0, left: Math.max(0, (wrapper.scrollWidth - wrapper.clientWidth) / 2), behavior: 'smooth' }});
+                }}
             }}
+
+            // Click-and-drag panning
+            const wrapperEl = document.getElementById('pidWrapper');
+            let isDown = false;
+            let startX = 0, startY = 0, scrollLeft = 0, scrollTop = 0;
+            wrapperEl.addEventListener('mousedown', (e) => {{
+                isDown = true;
+                wrapperEl.classList.add('dragging');
+                startX = e.pageX - wrapperEl.offsetLeft;
+                startY = e.pageY - wrapperEl.offsetTop;
+                scrollLeft = wrapperEl.scrollLeft;
+                scrollTop = wrapperEl.scrollTop;
+            }});
+            window.addEventListener('mouseup', () => {{
+                isDown = false;
+                wrapperEl.classList.remove('dragging');
+            }});
+            wrapperEl.addEventListener('mousemove', (e) => {{
+                if (!isDown) return;
+                e.preventDefault();
+                const x = e.pageX - wrapperEl.offsetLeft;
+                const y = e.pageY - wrapperEl.offsetTop;
+                wrapperEl.scrollLeft = scrollLeft - (x - startX);
+                wrapperEl.scrollTop = scrollTop - (y - startY);
+            }});
 
             const observer = new MutationObserver(() => {{
-                applySvgSizing();
+                baseW = 0;
+                baseH = 0;
+                applySvgSizing(true);
             }});
             observer.observe(document.getElementById('mermaidBox'), {{ childList: true, subtree: true }});
-            window.addEventListener('load', () => setTimeout(applySvgSizing, 250));
+            window.addEventListener('load', () => setTimeout(() => applySvgSizing(true), 250));
+            window.addEventListener('resize', () => {{ if (fitMode) applySvgSizing(false); }});
         </script>
     </body>
     </html>
     """
-    components.html(html, height=height, scrolling=True)
+    components.html(html, height=height, scrolling=False)
 
 
 # Unit conversion helpers & interactive parameter-with-unit widget
