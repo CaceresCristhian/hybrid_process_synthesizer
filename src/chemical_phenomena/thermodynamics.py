@@ -360,41 +360,62 @@ class Thermodynamics:
         bubble_temps = []
         dew_temps = []
         
-        # We search temperature ranges to solve bubble and dew points
+        def wilson_k(sp, T, P):
+            Tc = sp.macro.critical_temperature
+            Pc = sp.macro.critical_pressure
+            omega = sp.macro.acentric_factor if sp.macro.acentric_factor is not None else 0.1
+            return (Pc / P) * np.exp(5.373 * (1.0 + omega) * (1.0 - Tc / max(T, 50.0)))
+
         for P in pressures:
-            # Solve bubble point temperature: beta = 0.0 (onset of boiling)
-            # Find temperature T where flash beta is close to 0.0
-            def find_t_bubble(t_guess):
-                res = cls.solve_tp_flash(species_list, composition, t_guess, P)
-                return res["beta"] - 0.01  # target slightly above 0 for numerical ease
+            # 1. Smooth Bubble Point: sum(z_i * K_i(T, P)) = 1.0
+            t_low, t_high = 60.0, 800.0
+            for _ in range(30):
+                t_mid = 0.5 * (t_low + t_high)
+                f_mid = sum(composition.get(sp.id, 0.0) * wilson_k(sp, t_mid, P) for sp in species_list) - 1.0
+                if f_mid < 0.0:
+                    t_low = t_mid
+                else:
+                    t_high = t_mid
+            t_bub = 0.5 * (t_low + t_high)
             
-            # Solve dew point temperature: beta = 1.0 (onset of condensation)
-            def find_t_dew(t_guess):
-                res = cls.solve_tp_flash(species_list, composition, t_guess, P)
-                return res["beta"] - 0.99
-                
-            # Quick scanning for roots (simple secant search)
-            t_b = 300.0
-            t_d = 350.0
+            # Refine bubble point with PR-EOS fugacities (1-step damped correction)
+            try:
+                y_init = {sp.id: composition.get(sp.id, 0.0) * wilson_k(sp, t_bub, P) for sp in species_list}
+                s_y = max(1e-12, sum(y_init.values()))
+                y_init = {k: v / s_y for k, v in y_init.items()}
+                phi_L = cls.calculate_pr_fugacities(species_list, composition, t_bub, P, 'liquid')
+                phi_V = cls.calculate_pr_fugacities(species_list, y_init, t_bub, P, 'vapor')
+                sum_k_pr = sum(composition.get(sp.id, 0.0) * (phi_L[sp.id] / max(1e-8, phi_V[sp.id])) for sp in species_list)
+                if 0.2 < sum_k_pr < 5.0:
+                    t_bub = t_bub * (1.0 - 0.08 * np.log(sum_k_pr))
+            except Exception:
+                pass
+            bubble_temps.append(t_bub)
+
+            # 2. Smooth Dew Point: sum(z_i / K_i(T, P)) = 1.0
+            t_low, t_high = 60.0, 800.0
+            for _ in range(30):
+                t_mid = 0.5 * (t_low + t_high)
+                f_mid = sum(composition.get(sp.id, 0.0) / max(1e-10, wilson_k(sp, t_mid, P)) for sp in species_list) - 1.0
+                if f_mid > 0.0:
+                    t_low = t_mid
+                else:
+                    t_high = t_mid
+            t_dew = max(t_bub, 0.5 * (t_low + t_high))
             
-            # Use critical temps to bracket
-            Tc_mix = sum(composition.get(sp.id, 0.0) * sp.macro.critical_temperature for sp in species_list)
-            
-            # Secant updates
-            for t_val, target_fn, results_list in [(250.0, find_t_bubble, bubble_temps), (320.0, find_t_dew, dew_temps)]:
-                # simple secant solver
-                t1 = t_val
-                t2 = t_val + 5.0
-                f1 = target_fn(t1)
-                for _ in range(15):
-                    f2 = target_fn(t2)
-                    if np.abs(f2 - f1) < 1e-7:
-                        break
-                    t_next = t2 - f2 * (t2 - t1) / (f2 - f1)
-                    t_next = max(100.0, min(t_next, Tc_mix + 50.0))  # limit
-                    t1, t2 = t2, t_next
-                    f1 = f2
-                results_list.append(t2)
+            # Refine dew point with PR-EOS fugacities
+            try:
+                x_init = {sp.id: composition.get(sp.id, 0.0) / max(1e-10, wilson_k(sp, t_dew, P)) for sp in species_list}
+                s_x = max(1e-12, sum(x_init.values()))
+                x_init = {k: v / s_x for k, v in x_init.items()}
+                phi_L = cls.calculate_pr_fugacities(species_list, x_init, t_dew, P, 'liquid')
+                phi_V = cls.calculate_pr_fugacities(species_list, composition, t_dew, P, 'vapor')
+                sum_inv_k_pr = sum(composition.get(sp.id, 0.0) / max(1e-8, (phi_L[sp.id] / max(1e-8, phi_V[sp.id]))) for sp in species_list)
+                if 0.2 < sum_inv_k_pr < 5.0:
+                    t_dew = max(t_bub, t_dew * (1.0 + 0.08 * np.log(sum_inv_k_pr)))
+            except Exception:
+                pass
+            dew_temps.append(t_dew)
                 
         return {
             "pressures_kPa": pressures / 1000.0,

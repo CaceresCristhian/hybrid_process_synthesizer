@@ -200,25 +200,254 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Helper to render Mermaid inside Streamlit HTML component
-def render_mermaid(code: str):
+# Helper to render Mermaid inside Streamlit HTML component with full visibility & bottom-right controls
+def render_mermaid(code: str, height: int = 560):
     html = f"""
     <!DOCTYPE html>
     <html>
     <head>
         <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
-        <script>
-            mermaid.initialize({{ startOnLoad: true, theme: 'default' }});
-        </script>
+        <style>
+            * {{ box-sizing: border-box; }}
+            body {{
+                background-color: transparent;
+                margin: 0;
+                padding: 0;
+                font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            }}
+            .pid-wrapper {{
+                position: relative;
+                background-color: #f8fafc;
+                border: 2px solid #334155;
+                border-radius: 12px;
+                width: 100%;
+                height: {height - 16}px;
+                min-height: 320px;
+                resize: vertical;
+                overflow: auto;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                padding: 16px 16px 48px 16px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+            }}
+            .mermaid {{
+                width: 100%;
+                height: 100%;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                transform-origin: center center;
+                transition: transform 0.15s ease;
+            }}
+            .mermaid svg {{
+                max-width: 100% !important;
+                max-height: 100% !important;
+                width: auto !important;
+                height: auto !important;
+            }}
+            .pid-Wrapper-scroll .mermaid svg {{
+                max-width: none !important;
+                max-height: none !important;
+            }}
+            .pid-controls {{
+                position: absolute;
+                bottom: 8px;
+                right: 14px;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                background: rgba(15, 23, 42, 0.92);
+                color: #f8fafc;
+                padding: 5px 10px;
+                border-radius: 8px;
+                border: 1px solid #334155;
+                font-size: 12px;
+                z-index: 20;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            }}
+            .pid-btn {{
+                background: #1e293b;
+                color: #38bdf8;
+                border: 1px solid #475569;
+                border-radius: 5px;
+                padding: 3px 8px;
+                cursor: pointer;
+                font-size: 11px;
+                font-weight: 600;
+                transition: all 0.15s;
+            }}
+            .pid-btn:hover {{
+                background: #0f766e;
+                color: #ffffff;
+                border-color: #2dd4bf;
+            }}
+            .pid-btn.active {{
+                background: #0d9488;
+                color: #ffffff;
+                border-color: #2dd4bf;
+            }}
+            .resize-hint {{
+                color: #94a3b8;
+                font-size: 11px;
+                margin-left: 4px;
+                user-select: none;
+            }}
+        </style>
     </head>
-    <body style="background-color: #f8fafc; border-radius: 12px; margin: 0; padding: 12px;">
-        <div class="mermaid" style="display: flex; justify-content: center; align-items: center;">
-            {code}
+    <body>
+        <div id="pidWrapper" class="pid-wrapper">
+            <div id="mermaidBox" class="mermaid">
+                {code}
+            </div>
+            <div class="pid-controls" title="Use controls to fit complete P&ID or zoom, or drag bottom-right corner to resize">
+                <button id="btnFit" class="pid-btn active" onclick="setFitMode(true)">⛶ Fit Complete P&ID</button>
+                <button class="pid-btn" onclick="adjustZoom(-0.15)">🔍 −</button>
+                <span id="zoomLabel" style="min-width: 38px; text-align: center; font-weight: 600;">Fit</span>
+                <button class="pid-btn" onclick="adjustZoom(0.15)">🔍 +</button>
+                <button class="pid-btn" onclick="toggleTall()">⤢ Expand</button>
+                <span class="resize-hint">◢</span>
+            </div>
         </div>
+        <script>
+            mermaid.initialize({{ startOnLoad: true, theme: 'default', securityLevel: 'loose' }});
+            let currentZoom = 1.0;
+            let fitMode = true;
+            let tallMode = false;
+
+            function applySvgSizing() {{
+                const svg = document.querySelector('#mermaidBox svg');
+                if (!svg) return;
+                if (!svg.getAttribute('viewBox') && svg.getBBox) {{
+                    try {{
+                        const bbox = svg.getBBox();
+                        if (bbox.width > 0 && bbox.height > 0) {{
+                            svg.setAttribute('viewBox', `${{bbox.x - 10}} ${{bbox.y - 10}} ${{bbox.width + 20}} ${{bbox.height + 20}}`);
+                        }}
+                    }} catch(e) {{}}
+                }}
+                if (fitMode) {{
+                    svg.style.maxWidth = '100%';
+                    svg.style.maxHeight = '100%';
+                    svg.style.width = 'auto';
+                    svg.style.height = 'auto';
+                    document.getElementById('mermaidBox').style.transform = 'scale(1)';
+                    document.getElementById('zoomLabel').innerText = 'Fit';
+                    document.getElementById('btnFit').classList.add('active');
+                }} else {{
+                    svg.style.maxWidth = 'none';
+                    svg.style.maxHeight = 'none';
+                    document.getElementById('mermaidBox').style.transform = `scale(${{currentZoom}})`;
+                    document.getElementById('zoomLabel').innerText = `${{Math.round(currentZoom * 100)}}%`;
+                    document.getElementById('btnFit').classList.remove('active');
+                }}
+            }}
+
+            function setFitMode(enable) {{
+                fitMode = enable;
+                if (enable) currentZoom = 1.0;
+                applySvgSizing();
+            }}
+
+            function adjustZoom(delta) {{
+                fitMode = false;
+                currentZoom = Math.max(0.4, Math.min(2.5, currentZoom + delta));
+                applySvgSizing();
+            }}
+
+            function toggleTall() {{
+                const wrapper = document.getElementById('pidWrapper');
+                tallMode = !tallMode;
+                wrapper.style.height = tallMode ? '760px' : '{height - 16}px';
+                setTimeout(applySvgSizing, 50);
+            }}
+
+            const observer = new MutationObserver(() => {{
+                applySvgSizing();
+            }});
+            observer.observe(document.getElementById('mermaidBox'), {{ childList: true, subtree: true }});
+            window.addEventListener('load', () => setTimeout(applySvgSizing, 250));
+        </script>
     </body>
     </html>
     """
-    components.html(html, height=400, scrolling=True)
+    components.html(html, height=height, scrolling=True)
+
+
+# Unit conversion helpers & interactive parameter-with-unit widget
+def _conv_temp_to_unit(val_k: float, unit: str) -> float:
+    if unit == "°C":
+        return val_k - 273.15
+    elif unit == "°F":
+        return (val_k - 273.15) * 9.0 / 5.0 + 32.0
+    return val_k
+
+
+def _conv_temp_from_unit(val_u: float, unit: str) -> float:
+    if unit == "°C":
+        return val_u + 273.15
+    elif unit == "°F":
+        return (val_u - 32.0) * 5.0 / 9.0 + 273.15
+    return val_u
+
+
+def _conv_press_to_unit(val_kpa: float, unit: str) -> float:
+    factors = {"kPa": 1.0, "bar": 0.01, "atm": 1.0 / 101.325, "psi": 0.1450377, "MPa": 0.001}
+    return val_kpa * factors.get(unit, 1.0)
+
+
+def _conv_press_from_unit(val_u: float, unit: str) -> float:
+    factors = {"kPa": 1.0, "bar": 0.01, "atm": 1.0 / 101.325, "psi": 0.1450377, "MPa": 0.001}
+    return val_u / factors.get(unit, 1.0)
+
+
+def render_unit_number_input(
+    label: str,
+    key_prefix: str,
+    base_default: float,
+    base_min: float,
+    base_max: float,
+    base_step: float,
+    unit_options: list,
+    to_unit_fn,
+    from_unit_fn,
+    container=st.sidebar,
+    fmt: str = "%.2f",
+):
+    """Renders a direct numeric input paired with a compact unit selector dropdown.
+    Returns (value_in_base_unit, selected_unit, value_in_selected_unit).
+    """
+    base_state_key = f"{key_prefix}_base_si"
+    if base_state_key not in st.session_state:
+        st.session_state[base_state_key] = float(base_default)
+
+    c_num, c_unit = container.columns([2.5, 1.3])
+    with c_unit:
+        sel_unit = st.selectbox("Unit", unit_options, key=f"{key_prefix}_unit")
+
+    # Convert stored base value and bounds into the currently selected unit
+    u_min = float(to_unit_fn(base_min, sel_unit))
+    u_max = float(to_unit_fn(base_max, sel_unit))
+    if u_min > u_max:
+        u_min, u_max = u_max, u_min
+    u_default = float(np.clip(to_unit_fn(st.session_state[base_state_key], sel_unit), u_min, u_max))
+    span_ratio = (u_max - u_min) / max(1e-9, (base_max - base_min))
+    u_step = max(1e-4, float(base_step * span_ratio))
+
+    with c_num:
+        u_val = st.number_input(
+            f"{label} ({sel_unit})",
+            min_value=u_min,
+            max_value=u_max,
+            value=u_default,
+            step=u_step,
+            format=fmt,
+            key=f"{key_prefix}_val_{sel_unit}",
+        )
+
+    base_val = float(np.clip(from_unit_fn(u_val, sel_unit), base_min, base_max))
+    st.session_state[base_state_key] = base_val
+    return base_val, sel_unit, float(u_val)
 
 # App Header
 st.markdown(f'<div class="main-title">Hybrid Process Synthesizer (Aspen Plus & HYSYS Integrated)</div>', unsafe_allow_html=True)
@@ -330,71 +559,135 @@ Thermodynamics.db_mode = "python" if "Pure Python" in thermo_db_mode else "exter
 
 if simulation_mode == "Jacketed Bioreactor (R-101)":
     st.sidebar.subheader("Bioreactor Configuration")
-    temp_sp = st.sidebar.number_input("Temperature Setpoint (K)", min_value=290.15, max_value=330.15, value=310.15, step=1.0, format="%.2f")
-    feed_rate = st.sidebar.number_input("Feed Flow Rate (m3/h)", min_value=0.01, max_value=0.50, value=0.05, step=0.01, format="%.2f")
+    temp_sp, bio_t_unit, temp_sp_disp = render_unit_number_input(
+        "Temperature Setpoint",
+        "bio_temp_sp",
+        base_default=310.15,
+        base_min=290.15,
+        base_max=330.15,
+        base_step=1.0,
+        unit_options=["K", "°C", "°F"],
+        to_unit_fn=_conv_temp_to_unit,
+        from_unit_fn=_conv_temp_from_unit,
+        container=st.sidebar,
+        fmt="%.2f",
+    )
+    _vflow_factors = {"m³/h": 1.0, "L/h": 1000.0, "L/min": 1000.0 / 60.0, "m³/s": 1.0 / 3600.0}
+    feed_rate, bio_f_unit, feed_rate_disp = render_unit_number_input(
+        "Feed Flow Rate",
+        "bio_feed_rate",
+        base_default=0.05,
+        base_min=0.01,
+        base_max=0.50,
+        base_step=0.01,
+        unit_options=["m³/h", "L/h", "L/min", "m³/s"],
+        to_unit_fn=lambda v, u: v * _vflow_factors.get(u, 1.0),
+        from_unit_fn=lambda v, u: v / _vflow_factors.get(u, 1.0),
+        container=st.sidebar,
+        fmt="%.3f" if st.session_state.get("bio_feed_rate_unit") == "m³/s" else "%.2f",
+    )
     
     st.sidebar.subheader("PID Controller Tuning")
-    kp = st.sidebar.number_input("Proportional Gain (Kp)", min_value=1.0, max_value=50.0, value=15.0, step=1.0, format="%.1f")
-    ki = st.sidebar.number_input("Integral Gain (Ki)", min_value=0.1, max_value=10.0, value=2.0, step=0.1, format="%.1f")
-    kd = st.sidebar.number_input("Derivative Gain (Kd)", min_value=0.0, max_value=5.0, value=0.5, step=0.1, format="%.1f")
+    kp, _, _ = render_unit_number_input(
+        "Proportional Gain (Kp)",
+        "bio_kp",
+        base_default=15.0,
+        base_min=1.0,
+        base_max=50.0,
+        base_step=1.0,
+        unit_options=["%/K", "%/°C", "%/°F"],
+        to_unit_fn=lambda v, u: v * (5.0 / 9.0 if u == "%/°F" else 1.0),
+        from_unit_fn=lambda v, u: v / (5.0 / 9.0 if u == "%/°F" else 1.0),
+        container=st.sidebar,
+        fmt="%.1f",
+    )
+    ki, _, _ = render_unit_number_input(
+        "Integral Gain (Ki)",
+        "bio_ki",
+        base_default=2.0,
+        base_min=0.1,
+        base_max=10.0,
+        base_step=0.1,
+        unit_options=["1/h", "1/min"],
+        to_unit_fn=lambda v, u: v / 60.0 if u == "1/min" else v,
+        from_unit_fn=lambda v, u: v * 60.0 if u == "1/min" else v,
+        container=st.sidebar,
+        fmt="%.2f",
+    )
+    kd, _, _ = render_unit_number_input(
+        "Derivative Gain (Kd)",
+        "bio_kd",
+        base_default=0.5,
+        base_min=0.0,
+        base_max=5.0,
+        base_step=0.1,
+        unit_options=["h", "min"],
+        to_unit_fn=lambda v, u: v * 60.0 if u == "min" else v,
+        from_unit_fn=lambda v, u: v / 60.0 if u == "min" else v,
+        container=st.sidebar,
+        fmt="%.2f",
+    )
     
-    # Run dynamic bioreactor simulation (in hours)
+    # Run dynamic bioreactor simulation (in hours, with smooth sub-stepping)
     t_span = np.linspace(0.0, 8.0, 161)
-    dt = float(t_span[1] - t_span[0])
-    pid = PIDController(kp=kp, ki=ki, kd=kd, dt=dt, u_min=-25.0, u_max=35.0, setpoint=temp_sp)
+    dt_plot = float(t_span[1] - t_span[0])
+    n_sub = 10
+    dt_sub = dt_plot / n_sub
+    pid = PIDController(kp=kp, ki=ki, kd=kd, dt=dt_sub, u_min=-100.0, u_max=100.0, setpoint=temp_sp)
     bioreactor = JacketedBioreactor(
         unit_id="R-101",
         name="Jacketed Bioreactor",
         volume_init=1.2,
-        s_in=180.0,
-        u_coeff=600.0,
-        area=5.0,
+        s_in=220.0,
+        u_coeff=850.0,
+        area=6.0,
         temp_sp=temp_sp,
         pid_controller=pid
     )
     
     def bioreactor_kinetics(S, T):
-        temp_factor = np.exp(-((T - 310.15) ** 2) / 90.0)
-        mu_max = 0.45 * temp_factor
-        mu = mu_max * max(S, 0.0) / (8.0 + max(S, 0.0))
-        qp = mu * 0.35 + 0.03
-        return mu, qp, 0.50, 0.02
+        temp_factor = np.exp(-((T - 312.15) ** 2) / 140.0)
+        mu_max = 0.52 * temp_factor
+        mu = mu_max * max(S, 0.0) / (6.0 + max(S, 0.0))
+        qp = mu * 0.38 + 0.03
+        return mu, qp, 0.52, 0.015
 
     # Initial state: [X (g/L), S (g/L), P (g/L), V (m3), T (K), Tj (K)]
-    initial_state = [3.5, 120.0, 0.0, 1.2, 298.15, 298.15]
+    initial_state = [4.0, 120.0, 0.0, 1.2, 298.15, 298.15]
     y_vals = []
     state = initial_state.copy()
     rho_cp = 1000.0 * 4184.0
     ua_jh = bioreactor.u_coeff * bioreactor.area * 3600.0  # J/(h*K)
     v_jacket = 0.25  # m3
-    f_jacket_h = 2.5  # m3/h
+    f_jacket_h = 3.0  # m3/h
     
     for t in t_span:
         y_vals.append(state.copy())
-        X, S, P, V, T, Tj = state
-        mu, qp, Yxs, m = bioreactor_kinetics(S, T)
-        
-        # Closed-loop PID temperature control adjusts jacket inlet temperature target
-        u_ctrl = pid.compute(temp_sp, T)
-        t_jacket_target = np.clip(temp_sp + u_ctrl, 280.0, 345.0)
-        
-        # Mass balances (time in hours, feed_rate in m3/h)
-        dVdt = feed_rate
-        dXdt = mu * X - (feed_rate / V) * X
-        dSdt = (feed_rate / V) * (bioreactor.s_in - S) - (mu / Yxs + m) * X
-        dPdt = qp * X - (feed_rate / V) * P
-        
-        # Energy balances (in hours, including metabolic heat & jacket heat transfer)
-        q_rxn_jh = (mu * X * V) * 1.8e7  # J/h exothermic metabolic heat
-        q_trans_jh = ua_jh * (T - Tj)
-        dTdt = (feed_rate / V) * (298.15 - T) + (q_rxn_jh - q_trans_jh) / (rho_cp * V)
-        dTjdt = (f_jacket_h / v_jacket) * (t_jacket_target - Tj) + q_trans_jh / (rho_cp * v_jacket)
-        
-        derivs = [dXdt, dSdt, dPdt, dVdt, dTdt, dTjdt]
-        state = [state[i] + derivs[i] * dt for i in range(6)]
-        state[0] = max(0.0, state[0])
-        state[1] = max(0.0, state[1])
-        state[2] = max(0.0, state[2])
+        for _ in range(n_sub):
+            X, S, P, V, T, Tj = state
+            mu, qp, Yxs, m = bioreactor_kinetics(S, T)
+            
+            # Closed-loop PID temperature control adjusts jacket inlet temperature target smoothly
+            u_ctrl = pid.compute(temp_sp, T)
+            t_jacket_target = np.clip(temp_sp + 0.25 * u_ctrl, 280.0, 345.0)
+            
+            # Mass balances (time in hours, feed_rate in m3/h)
+            dVdt = feed_rate
+            dXdt = mu * X - (feed_rate / V) * X
+            dSdt = (feed_rate / V) * (bioreactor.s_in - S) - (mu / Yxs + m) * X
+            dPdt = qp * X - (feed_rate / V) * P
+            
+            # Energy balances (in hours, including metabolic heat & jacket heat transfer)
+            q_rxn_jh = (mu * X * V) * 1.4e7  # J/h exothermic metabolic heat
+            q_trans_jh = ua_jh * (T - Tj)
+            dTdt = (feed_rate / V) * (298.15 - T) + (q_rxn_jh - q_trans_jh) / (rho_cp * V)
+            dTjdt = (f_jacket_h / v_jacket) * (t_jacket_target - Tj) + q_trans_jh / (rho_cp * v_jacket)
+            
+            derivs = [dXdt, dSdt, dPdt, dVdt, dTdt, dTjdt]
+            state = [state[i] + derivs[i] * dt_sub for i in range(6)]
+            state[0] = max(0.0, state[0])
+            state[1] = max(0.0, state[1])
+            state[2] = max(0.0, state[2])
     
     y_vals = np.array(y_vals)
     
@@ -403,6 +696,7 @@ if simulation_mode == "Jacketed Bioreactor (R-101)":
     design_p = 200000.0
     radius = np.sqrt(max_vol / (np.pi * 3))
     t_shell = (design_p * radius) / (115.0e6 * 0.85 - 0.6 * design_p) * 1000 + 1.5
+    final_T_disp = _conv_temp_to_unit(y_vals[-1, 4], bio_t_unit)
     
     # Layout grid
     col_img, col_metrics = st.columns([2, 3])
@@ -421,15 +715,15 @@ if simulation_mode == "Jacketed Bioreactor (R-101)":
                 <h5>ASME Vessel Catalog</h5>
                 <b>Calculated Thickness:</b> {t_shell:.2f} mm<br/>
                 <b>ASME Material:</b> SS-316<br/>
-                <b>Max Vessel Volume:</b> {max_vol:.2f} m³
+                <b>Max Vessel Volume:</b> {max_vol:.2f} m³ ({max_vol*1000:.0f} L)
             </div>
             """, unsafe_allow_html=True)
         with sub_col2:
             st.markdown(f"""
             <div class="metric-card">
                 <h5>Piping & Feed Line</h5>
-                <b>Calculated NPS:</b> 1.5"<br/>
-                <b>Inside Diameter:</b> 40.9 mm<br/>
+                <b>Calculated NPS:</b> 1.5" &nbsp;|&nbsp; <b>ID:</b> 40.9 mm<br/>
+                <b>Feed Flow:</b> {feed_rate_disp:.2f} {bio_f_unit}<br/>
                 <b>Pressure Drop:</b> 14.5 kPa
             </div>
             """, unsafe_allow_html=True)
@@ -438,7 +732,7 @@ if simulation_mode == "Jacketed Bioreactor (R-101)":
         <div class="metric-card">
             <h5>Pump Selection & Batch Performance (t = 8 h)</h5>
             <b>Calculated Hydraulic Power:</b> {feed_rate/3600 * 14500 * 1000:.2f} mW &nbsp;|&nbsp; <b>Catalog Motor:</b> 25 W Nominal<br/>
-            <b>Final Biomass (X):</b> {y_vals[-1, 0]:.1f} g/L &nbsp;|&nbsp; <b>Final Product (P):</b> {y_vals[-1, 2]:.1f} g/L &nbsp;|&nbsp; <b>Final Temp (T):</b> {y_vals[-1, 4]:.2f} K
+            <b>Final Biomass (X):</b> {y_vals[-1, 0]:.1f} g/L &nbsp;|&nbsp; <b>Final Product (P):</b> {y_vals[-1, 2]:.1f} g/L &nbsp;|&nbsp; <b>Final Temp (T):</b> {final_T_disp:.2f} {bio_t_unit}
         </div>
         """, unsafe_allow_html=True)
 
@@ -454,11 +748,14 @@ if simulation_mode == "Jacketed Bioreactor (R-101)":
         st.plotly_chart(fig_conc, use_container_width=True)
         
     with plot_col2:
+        t_curve_disp = [_conv_temp_to_unit(v, bio_t_unit) for v in y_vals[:, 4]]
+        tj_curve_disp = [_conv_temp_to_unit(v, bio_t_unit) for v in y_vals[:, 5]]
+        sp_curve_disp = [temp_sp_disp] * len(t_span)
         fig_temp = go.Figure()
-        fig_temp.add_trace(go.Scatter(x=t_span, y=y_vals[:, 4], name="Reactor Temp (T)", line=dict(color="#f43f5e", width=3)))
-        fig_temp.add_trace(go.Scatter(x=t_span, y=[temp_sp]*len(t_span), name="Setpoint", line=dict(color="#facc15", width=2, dash="dash")))
-        fig_temp.add_trace(go.Scatter(x=t_span, y=y_vals[:, 5], name="Jacket Temp (Tj)", line=dict(color="#38bdf8", width=2)))
-        fig_temp.update_layout(title="Temperature Control Performance", xaxis_title="Time (hours)", yaxis_title="Temperature (K)", height=350)
+        fig_temp.add_trace(go.Scatter(x=t_span, y=t_curve_disp, name=f"Reactor Temp (T)", line=dict(color="#f43f5e", width=3)))
+        fig_temp.add_trace(go.Scatter(x=t_span, y=sp_curve_disp, name=f"Setpoint ({temp_sp_disp:.2f} {bio_t_unit})", line=dict(color="#facc15", width=2, dash="dash")))
+        fig_temp.add_trace(go.Scatter(x=t_span, y=tj_curve_disp, name=f"Jacket Temp (Tj)", line=dict(color="#38bdf8", width=2)))
+        fig_temp.update_layout(title=f"Temperature Control Performance ({bio_t_unit})", xaxis_title="Time (hours)", yaxis_title=f"Temperature ({bio_t_unit})", height=350)
         st.plotly_chart(fig_temp, use_container_width=True)
 
     # P&ID rendering
@@ -483,7 +780,7 @@ if simulation_mode == "Jacketed Bioreactor (R-101)":
     layout.add_control_signal("TT-101", "TC-101")
     layout.add_control_signal("TC-101", "TCV-101")
     
-    render_mermaid(layout.to_mermaid())
+    render_mermaid(layout.to_mermaid(), height=560)
 
 elif simulation_mode == "Distillation Sizing & Hydraulics (C-101)":
     st.sidebar.subheader("Chemical Agent Selection")
@@ -496,19 +793,75 @@ elif simulation_mode == "Distillation Sizing & Hydraulics (C-101)":
     st.sidebar.subheader("Distillation Column Configuration")
     num_stages = int(st.sidebar.number_input("Total Stages (N)", min_value=5, max_value=50, value=12, step=1))
     feed_stage = int(st.sidebar.number_input("Feed Stage", min_value=2, max_value=max(2, num_stages-1), value=min(num_stages//2, max(2, num_stages-1)), step=1))
-    reflux_ratio = st.sidebar.number_input("Reflux Ratio (R)", min_value=0.5, max_value=20.0, value=2.5, step=0.1, format="%.2f")
-    z_f = st.sidebar.number_input("Feed Mole Fraction (Light Key)", min_value=0.05, max_value=0.95, value=0.25, step=0.05, format="%.2f")
+    reflux_ratio, _, _ = render_unit_number_input(
+        "Reflux Ratio (R)",
+        "dist_rr",
+        base_default=2.5,
+        base_min=0.5,
+        base_max=20.0,
+        base_step=0.1,
+        unit_options=["L/D ratio", "% of Distillate"],
+        to_unit_fn=lambda v, u: v * 100.0 if u == "% of Distillate" else v,
+        from_unit_fn=lambda v, u: v / 100.0 if u == "% of Distillate" else v,
+        container=st.sidebar,
+        fmt="%.2f",
+    )
+    z_f, dist_z_unit, _ = render_unit_number_input(
+        "Feed Light Key",
+        "dist_zf",
+        base_default=0.25,
+        base_min=0.05,
+        base_max=0.95,
+        base_step=0.05,
+        unit_options=["mol fraction", "mol %"],
+        to_unit_fn=lambda v, u: v * 100.0 if u == "mol %" else v,
+        from_unit_fn=lambda v, u: v / 100.0 if u == "mol %" else v,
+        container=st.sidebar,
+        fmt="%.2f",
+    )
+    dist_t_unit = st.sidebar.selectbox("Temperature Display Unit", ["K", "°C", "°F"], key="dist_t_unit")
     
     # Side draws and pump-around inputs
     st.sidebar.subheader("Refinery Side Operations (HYSYS-style)")
     enable_draw = st.sidebar.checkbox("Enable Liquid Side Draw")
     draw_stage = int(st.sidebar.number_input("Side Draw Stage", min_value=2, max_value=max(2, num_stages-1), value=min(4, max(2, num_stages-1)), step=1)) if enable_draw else 4
-    draw_frac = st.sidebar.number_input("Side Draw Fraction (of liquid)", min_value=0.0, max_value=0.5, value=0.10, step=0.05, format="%.2f") if enable_draw else 0.0
+    if enable_draw:
+        draw_frac, _, _ = render_unit_number_input(
+            "Side Draw Fraction",
+            "dist_draw_frac",
+            base_default=0.10,
+            base_min=0.0,
+            base_max=0.50,
+            base_step=0.05,
+            unit_options=["fraction", "%"],
+            to_unit_fn=lambda v, u: v * 100.0 if u == "%" else v,
+            from_unit_fn=lambda v, u: v / 100.0 if u == "%" else v,
+            container=st.sidebar,
+            fmt="%.2f",
+        )
+    else:
+        draw_frac = 0.0
     
     enable_pa = st.sidebar.checkbox("Enable Pump-Around Loop")
     pa_draw = int(st.sidebar.number_input("Pump-around Draw Stage", min_value=3, max_value=max(3, num_stages-1), value=max(3, num_stages-2), step=1)) if enable_pa else 8
     pa_return = int(st.sidebar.number_input("Pump-around Return Stage", min_value=2, max_value=max(2, pa_draw-1), value=2, step=1)) if enable_pa else 3
-    pa_flow = st.sidebar.number_input("Pump-around Flow Rate (mol/s)", min_value=0.0, max_value=10.0, value=1.5, step=0.1, format="%.2f") if enable_pa else 0.0
+    if enable_pa:
+        _mflow_factors = {"mol/s": 1.0, "kmol/h": 3.6, "mol/min": 60.0}
+        pa_flow, _, _ = render_unit_number_input(
+            "Pump-around Flow",
+            "dist_pa_flow",
+            base_default=1.5,
+            base_min=0.0,
+            base_max=10.0,
+            base_step=0.1,
+            unit_options=["mol/s", "kmol/h", "mol/min"],
+            to_unit_fn=lambda v, u: v * _mflow_factors.get(u, 1.0),
+            from_unit_fn=lambda v, u: v / _mflow_factors.get(u, 1.0),
+            container=st.sidebar,
+            fmt="%.2f",
+        )
+    else:
+        pa_flow = 0.0
 
     if light_species.id == heavy_species.id:
         st.warning("Warning: Light and Heavy key components are the same! Standard binary separation is not possible. Please select different agents.")
@@ -545,6 +898,10 @@ elif simulation_mode == "Distillation Sizing & Hydraulics (C-101)":
     )
     
     sizing = column.size_equipment()
+    t_cond_disp = _conv_temp_to_unit(result['T'][0], dist_t_unit)
+    t_reb_disp = _conv_temp_to_unit(result['T'][-1], dist_t_unit)
+    t_lbp_disp = _conv_temp_to_unit(light_species.macro.boiling_point, dist_t_unit)
+    t_hbp_disp = _conv_temp_to_unit(heavy_species.macro.boiling_point, dist_t_unit)
     
     # Layout grid
     col_img, col_metrics = st.columns([2, 3])
@@ -562,8 +919,8 @@ elif simulation_mode == "Distillation Sizing & Hydraulics (C-101)":
             <div class="metric-card">
                 <h5>Distillate Output</h5>
                 <b>Purity:</b> {result['distillate_x']*100:.2f} mol%<br/>
-                <b>Condenser Temp:</b> {result['T'][0]:.2f} K<br/>
-                <b>Light BP:</b> {light_species.macro.boiling_point:.1f} K
+                <b>Condenser Temp:</b> {t_cond_disp:.2f} {dist_t_unit}<br/>
+                <b>Light BP:</b> {t_lbp_disp:.1f} {dist_t_unit}
             </div>
             """, unsafe_allow_html=True)
         with sub_col2:
@@ -571,8 +928,8 @@ elif simulation_mode == "Distillation Sizing & Hydraulics (C-101)":
             <div class="metric-card">
                 <h5>Bottoms Output</h5>
                 <b>Bottoms Fraction:</b> {result['bottoms_x']*100:.2f} mol%<br/>
-                <b>Reboiler Temp:</b> {result['T'][-1]:.2f} K<br/>
-                <b>Heavy BP:</b> {heavy_species.macro.boiling_point:.1f} K
+                <b>Reboiler Temp:</b> {t_reb_disp:.2f} {dist_t_unit}<br/>
+                <b>Heavy BP:</b> {t_hbp_disp:.1f} {dist_t_unit}
             </div>
             """, unsafe_allow_html=True)
             
@@ -597,9 +954,10 @@ elif simulation_mode == "Distillation Sizing & Hydraulics (C-101)":
         st.plotly_chart(fig_profile, use_container_width=True)
         
     with plot_col2:
+        t_stage_disp = [_conv_temp_to_unit(val, dist_t_unit) for val in result["T"]]
         fig_temp = go.Figure()
-        fig_temp.add_trace(go.Scatter(x=result["stages"], y=result["T"], name="Stage Temperature (T)", line=dict(color="#f43f5e", width=3)))
-        fig_temp.update_layout(title="Temperature Profile along Column", xaxis_title="Stage Number", yaxis_title="Temperature (K)", height=350)
+        fig_temp.add_trace(go.Scatter(x=result["stages"], y=t_stage_disp, name=f"Stage Temperature ({dist_t_unit})", line=dict(color="#f43f5e", width=3)))
+        fig_temp.update_layout(title=f"Temperature Profile along Column ({dist_t_unit})", xaxis_title="Stage Number", yaxis_title=f"Temperature ({dist_t_unit})", height=350)
         st.plotly_chart(fig_temp, use_container_width=True)
 
     # P&ID rendering
@@ -629,7 +987,7 @@ elif simulation_mode == "Distillation Sizing & Hydraulics (C-101)":
     layout.add_control_signal("Column", "TC-102")
     layout.add_control_signal("TC-102", "RefluxValve")
     
-    render_mermaid(layout.to_mermaid())
+    render_mermaid(layout.to_mermaid(), height=580)
 
 elif simulation_mode == "Hydrocarbon PT Phase Envelope (PR-EOS)":
     st.write("### Multi-component Phase Envelope Solver")
@@ -642,7 +1000,19 @@ elif simulation_mode == "Hydrocarbon PT Phase Envelope (PR-EOS)":
     comp2 = species_map[comp2_name]
     
     st.sidebar.subheader("Mixture Fraction Configuration")
-    methane_fraction = st.sidebar.number_input(f"{comp1_name} Mole Fraction", min_value=0.05, max_value=0.95, value=0.40, step=0.05, format="%.2f")
+    methane_fraction, _, _ = render_unit_number_input(
+        f"{comp1_name} Content",
+        "pt_c1_frac",
+        base_default=0.40,
+        base_min=0.05,
+        base_max=0.95,
+        base_step=0.05,
+        unit_options=["mol fraction", "mol %"],
+        to_unit_fn=lambda v, u: v * 100.0 if u == "mol %" else v,
+        from_unit_fn=lambda v, u: v / 100.0 if u == "mol %" else v,
+        container=st.sidebar,
+        fmt="%.2f",
+    )
     ethane_fraction = 1.0 - methane_fraction
     
     species_list = [comp1, comp2]
@@ -657,29 +1027,58 @@ elif simulation_mode == "Hydrocarbon PT Phase Envelope (PR-EOS)":
             </div>
         """, unsafe_allow_html=True)
         
+    # Interactive single point solver with unit selectors
+    st.write("### Single Point VLE Flash Solver")
+    col1, col2 = st.columns(2)
+    with col1:
+        test_T, pt_t_unit, test_T_disp = render_unit_number_input(
+            "Flash Temperature",
+            "pt_flash_t",
+            base_default=200.0,
+            base_min=100.0,
+            base_max=500.0,
+            base_step=5.0,
+            unit_options=["K", "°C", "°F"],
+            to_unit_fn=_conv_temp_to_unit,
+            from_unit_fn=_conv_temp_from_unit,
+            container=col1,
+            fmt="%.2f",
+        )
+    with col2:
+        test_P, pt_p_unit, test_P_disp = render_unit_number_input(
+            "Flash Pressure",
+            "pt_flash_p",
+            base_default=1500.0,
+            base_min=100.0,
+            base_max=10000.0,
+            base_step=50.0,
+            unit_options=["kPa", "bar", "atm", "psi", "MPa"],
+            to_unit_fn=_conv_press_to_unit,
+            from_unit_fn=_conv_press_from_unit,
+            container=col2,
+            fmt="%.2f",
+        )
+
     # Generate Phase Envelope
     with st.spinner("Calculating phase envelope via PR-EOS..."):
         envelope = Thermodynamics.generate_pt_envelope(species_list, composition)
         
-    # Plot PT-Envelope
+    # Plot PT-Envelope in selected units
+    bub_t_disp = [_conv_temp_to_unit(t_k, pt_t_unit) for t_k in envelope["bubble_T_K"]]
+    dew_t_disp = [_conv_temp_to_unit(t_k, pt_t_unit) for t_k in envelope["dew_T_K"]]
+    press_disp = [_conv_press_to_unit(p_kpa, pt_p_unit) for p_kpa in envelope["pressures_kPa"]]
+    
     fig_env = go.Figure()
-    fig_env.add_trace(go.Scatter(x=envelope["bubble_T_K"], y=envelope["pressures_kPa"], name="Bubble Point Curve (Liquid)", line=dict(color="#14b8a6", width=3)))
-    fig_env.add_trace(go.Scatter(x=envelope["dew_T_K"], y=envelope["pressures_kPa"], name="Dew Point Curve (Vapor)", line=dict(color="#f43f5e", width=3, dash="dash")))
+    fig_env.add_trace(go.Scatter(x=bub_t_disp, y=press_disp, name="Bubble Point Curve (Liquid)", line=dict(color="#14b8a6", width=3)))
+    fig_env.add_trace(go.Scatter(x=dew_t_disp, y=press_disp, name="Dew Point Curve (Vapor)", line=dict(color="#f43f5e", width=3, dash="dash")))
+    fig_env.add_trace(go.Scatter(x=[test_T_disp], y=[test_P_disp], mode="markers", name="Flash Operating Point", marker=dict(color="#facc15", size=11, symbol="diamond")))
     fig_env.update_layout(
         title=f"{comp1_name}-{comp2_name} PT Phase Envelope ({methane_fraction*100:.0f}% {comp1_name} / {ethane_fraction*100:.0f}% {comp2_name})",
-        xaxis_title="Temperature (Kelvin)",
-        yaxis_title="Pressure (kPa)",
-        height=500
+        xaxis_title=f"Temperature ({pt_t_unit})",
+        yaxis_title=f"Pressure ({pt_p_unit})",
+        height=480
     )
     st.plotly_chart(fig_env, use_container_width=True)
-    
-    # Interactive single point solver
-    st.write("### Single Point VLE Flash Solver")
-    col1, col2 = st.columns(2)
-    with col1:
-        test_T = st.number_input("Flash Temperature (K)", min_value=100.0, max_value=500.0, value=200.0, step=5.0, format="%.2f")
-    with col2:
-        test_P = st.number_input("Flash Pressure (kPa)", min_value=100.0, max_value=10000.0, value=1500.0, step=50.0, format="%.1f")
         
     res = Thermodynamics.solve_tp_flash(species_list, composition, test_T, test_P * 1000.0)
     
@@ -707,10 +1106,48 @@ elif simulation_mode == "Electrolyte Equilibrium & Activity":
         st.subheader("e-NRTL Molalities Configuration")
         col1, col2 = st.columns(2)
         with col1:
-            m_na = st.number_input("Sodium Ion (Na+) molality (mol/kg)", min_value=0.0, max_value=10.0, value=1.0, step=0.1, format="%.2f")
-            m_cl = st.number_input("Chloride Ion (Cl-) molality (mol/kg)", min_value=0.0, max_value=10.0, value=1.0, step=0.1, format="%.2f")
+            _na_factors = {"mol/kg": 1.0, "mmol/kg": 1000.0, "g/kg": 22.99}
+            m_na, _, _ = render_unit_number_input(
+                "Sodium Ion (Na+) Molality",
+                "el_m_na",
+                base_default=1.0,
+                base_min=0.0,
+                base_max=10.0,
+                base_step=0.1,
+                unit_options=["mol/kg", "mmol/kg", "g/kg"],
+                to_unit_fn=lambda v, u: v * _na_factors.get(u, 1.0),
+                from_unit_fn=lambda v, u: v / _na_factors.get(u, 1.0),
+                container=col1,
+                fmt="%.2f",
+            )
+            _cl_factors = {"mol/kg": 1.0, "mmol/kg": 1000.0, "g/kg": 35.45}
+            m_cl, _, _ = render_unit_number_input(
+                "Chloride Ion (Cl-) Molality",
+                "el_m_cl",
+                base_default=1.0,
+                base_min=0.0,
+                base_max=10.0,
+                base_step=0.1,
+                unit_options=["mol/kg", "mmol/kg", "g/kg"],
+                to_unit_fn=lambda v, u: v * _cl_factors.get(u, 1.0),
+                from_unit_fn=lambda v, u: v / _cl_factors.get(u, 1.0),
+                container=col1,
+                fmt="%.2f",
+            )
         with col2:
-            m_temp = st.number_input("System Temperature (K)", min_value=273.15, max_value=373.15, value=298.15, step=1.0, format="%.2f")
+            m_temp, _, _ = render_unit_number_input(
+                "System Temperature",
+                "el_m_temp",
+                base_default=298.15,
+                base_min=273.15,
+                base_max=373.15,
+                base_step=1.0,
+                unit_options=["K", "°C", "°F"],
+                to_unit_fn=_conv_temp_to_unit,
+                from_unit_fn=_conv_temp_from_unit,
+                container=col2,
+                fmt="%.2f",
+            )
             
         charges = {'Na+': 1, 'Cl-': -1, 'water': 0}
         molalities = {'Na+': m_na, 'Cl-': m_cl, 'water': 55.5}
@@ -726,11 +1163,62 @@ elif simulation_mode == "Electrolyte Equilibrium & Activity":
         st.subheader("Chemical Equilibrium Configuration")
         col1, col2 = st.columns(2)
         with col1:
-            total_acid = st.number_input("Total Acetic Acid concentration (mol/L)", min_value=0.0, max_value=5.0, value=0.10, step=0.01, format="%.3f")
-            total_base = st.number_input("Total Strong Base (NaOH) concentration (mol/L)", min_value=0.0, max_value=5.0, value=0.05, step=0.01, format="%.3f")
+            _acid_factors = {"mol/L (M)": 1.0, "mmol/L (mM)": 1000.0, "g/L": 60.05}
+            total_acid, _, _ = render_unit_number_input(
+                "Total Acetic Acid",
+                "el_acid",
+                base_default=0.10,
+                base_min=0.0,
+                base_max=5.0,
+                base_step=0.01,
+                unit_options=["mol/L (M)", "mmol/L (mM)", "g/L"],
+                to_unit_fn=lambda v, u: v * _acid_factors.get(u, 1.0),
+                from_unit_fn=lambda v, u: v / _acid_factors.get(u, 1.0),
+                container=col1,
+                fmt="%.3f",
+            )
+            _base_factors = {"mol/L (M)": 1.0, "mmol/L (mM)": 1000.0, "g/L": 40.00}
+            total_base, _, _ = render_unit_number_input(
+                "Total Strong Base (NaOH)",
+                "el_base",
+                base_default=0.05,
+                base_min=0.0,
+                base_max=5.0,
+                base_step=0.01,
+                unit_options=["mol/L (M)", "mmol/L (mM)", "g/L"],
+                to_unit_fn=lambda v, u: v * _base_factors.get(u, 1.0),
+                from_unit_fn=lambda v, u: v / _base_factors.get(u, 1.0),
+                container=col1,
+                fmt="%.3f",
+            )
         with col2:
-            total_salt = st.number_input("Total Sparingly Soluble Salt MX added (mol/L)", min_value=0.0, max_value=1.0, value=0.020, step=0.005, format="%.3f")
-            e_temp = st.number_input("Temperature (K)", min_value=273.15, max_value=373.15, value=298.15, step=1.0, format="%.2f")
+            _salt_factors = {"mol/L (M)": 1.0, "mmol/L (mM)": 1000.0}
+            total_salt, _, _ = render_unit_number_input(
+                "Sparingly Soluble Salt MX",
+                "el_salt",
+                base_default=0.020,
+                base_min=0.0,
+                base_max=1.0,
+                base_step=0.005,
+                unit_options=["mol/L (M)", "mmol/L (mM)"],
+                to_unit_fn=lambda v, u: v * _salt_factors.get(u, 1.0),
+                from_unit_fn=lambda v, u: v / _salt_factors.get(u, 1.0),
+                container=col2,
+                fmt="%.3f",
+            )
+            e_temp, _, _ = render_unit_number_input(
+                "System Temperature",
+                "el_eq_temp",
+                base_default=298.15,
+                base_min=273.15,
+                base_max=373.15,
+                base_step=1.0,
+                unit_options=["K", "°C", "°F"],
+                to_unit_fn=_conv_temp_to_unit,
+                from_unit_fn=_conv_temp_from_unit,
+                container=col2,
+                fmt="%.2f",
+            )
             
         eq = ElectrolyteModel.solve_chemical_equilibrium(total_acid, total_base, total_salt, e_temp)
         
@@ -753,40 +1241,91 @@ elif simulation_mode == "Pressure-Flow Network Solver":
     st.write("### Pressure-Flow Valve Dynamics (HYSYS-style)")
     
     st.sidebar.subheader("Pressure Boundaries")
-    p_source = st.sidebar.number_input("Inlet Source Pressure (kPa)", min_value=110.0, max_value=1000.0, value=300.0, step=10.0, format="%.1f") * 1000.0
-    p_sink = st.sidebar.number_input("Outlet Sink Pressure (kPa)", min_value=50.0, max_value=200.0, value=101.3, step=1.0, format="%.1f") * 1000.0
+    p_source_kpa, pf_p_unit, p_src_disp = render_unit_number_input(
+        "Inlet Source Pressure",
+        "pf_p_src",
+        base_default=300.0,
+        base_min=110.0,
+        base_max=1000.0,
+        base_step=10.0,
+        unit_options=["kPa", "bar", "atm", "psi"],
+        to_unit_fn=_conv_press_to_unit,
+        from_unit_fn=_conv_press_from_unit,
+        container=st.sidebar,
+        fmt="%.2f",
+    )
+    p_sink_kpa, pf_psink_unit, p_snk_disp = render_unit_number_input(
+        "Outlet Sink Pressure",
+        "pf_p_snk",
+        base_default=101.3,
+        base_min=50.0,
+        base_max=200.0,
+        base_step=1.0,
+        unit_options=["kPa", "bar", "atm", "psi"],
+        to_unit_fn=_conv_press_to_unit,
+        from_unit_fn=_conv_press_from_unit,
+        container=st.sidebar,
+        fmt="%.2f",
+    )
+    p_source = p_source_kpa * 1000.0
+    p_sink = p_sink_kpa * 1000.0
     
     col1, col2 = st.columns(2)
     with col1:
-        v1_open = st.number_input("Valve 1 opening fraction", min_value=0.0, max_value=1.0, value=0.70, step=0.05, format="%.2f")
+        v1_open, _, _ = render_unit_number_input(
+            "Valve 1 Opening",
+            "pf_v1",
+            base_default=0.70,
+            base_min=0.0,
+            base_max=1.0,
+            base_step=0.05,
+            unit_options=["fraction (0–1)", "percent (%)"],
+            to_unit_fn=lambda v, u: v * 100.0 if u == "percent (%)" else v,
+            from_unit_fn=lambda v, u: v / 100.0 if u == "percent (%)" else v,
+            container=col1,
+            fmt="%.2f",
+        )
     with col2:
-        v2_open = st.number_input("Valve 2 opening fraction", min_value=0.0, max_value=1.0, value=0.50, step=0.05, format="%.2f")
+        v2_open, _, _ = render_unit_number_input(
+            "Valve 2 Opening",
+            "pf_v2",
+            base_default=0.50,
+            base_min=0.0,
+            base_max=1.0,
+            base_step=0.05,
+            unit_options=["fraction (0–1)", "percent (%)"],
+            to_unit_fn=lambda v, u: v * 100.0 if u == "percent (%)" else v,
+            from_unit_fn=lambda v, u: v / 100.0 if u == "percent (%)" else v,
+            container=col2,
+            fmt="%.2f",
+        )
         
     p_mid, flow = PressureFlowSolver.solve_series_valves(p_source, p_sink, 0.5, v1_open, 0.5, v2_open)
+    p_mid_disp = _conv_press_to_unit(p_mid / 1000.0, pf_p_unit)
     
     col3, col4, col5 = st.columns(3)
     with col3:
-        st.metric("Source Pressure", f"{p_source/1000:.1f} kPa")
+        st.metric("Source Pressure", f"{p_src_disp:.2f} {pf_p_unit}")
     with col4:
-        st.metric("Mid Node Pressure", f"{p_mid/1000:.2f} kPa")
+        st.metric("Mid Node Pressure", f"{p_mid_disp:.2f} {pf_p_unit}")
     with col5:
         st.metric("Network Flow Rate", f"{flow:.3f} mol/s")
         
     # Render P&ID of valve network
     st.write("### Valve Network topology")
     layout = PIDLayout("Valve Network P&ID")
-    layout.add_equipment("Source", f"Source Boundary\\n{p_source/1000:.1f} kPa")
+    layout.add_equipment("Source", f"Source Boundary\\n{p_src_disp:.2f} {pf_p_unit}")
     layout.add_valve("V1", f"Valve V-101\\nOpen: {v1_open*100:.0f}%")
-    layout.add_instrument("P_Mid", f"Mid Node\\n{p_mid/1000:.1f} kPa")
+    layout.add_instrument("P_Mid", f"Mid Node\\n{p_mid_disp:.2f} {pf_p_unit}")
     layout.add_valve("V2", f"Valve V-102\\nOpen: {v2_open*100:.0f}%")
-    layout.add_equipment("Sink", f"Sink Boundary\\n{p_sink/1000:.1f} kPa")
+    layout.add_equipment("Sink", f"Sink Boundary\\n{p_snk_disp:.2f} {pf_psink_unit}")
     
     layout.add_process_stream("Source", "V1")
     layout.add_process_stream("V1", "P_Mid", f"Flow: {flow:.3f} mol/s")
     layout.add_process_stream("P_Mid", "V2")
     layout.add_process_stream("V2", "Sink")
     
-    render_mermaid(layout.to_mermaid())
+    render_mermaid(layout.to_mermaid(), height=500)
 
 elif simulation_mode == "Interactive Flowsheet Designer":
     st.write("### Flowsheet Design Studio (AutoCAD & HYSYS-style)")
