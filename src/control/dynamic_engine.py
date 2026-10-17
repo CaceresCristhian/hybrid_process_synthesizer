@@ -86,28 +86,63 @@ class DynamicSimulationEngine:
         alarms = []
 
         # Purity warning
-        xd = self.column.x[0]
+        xd = float(self.column.x[0])
         if xd < 0.80:
             alarms.append({
                 "time": self.current_time,
+                "alarm_code": "ALM-QA101",
                 "severity": "WARNING",
                 "tag": "QA-101",
+                "current_value": xd * 100.0,
+                "threshold": 80.0,
                 "message": f"Off-spec distillate purity: xD = {xd*100:.1f}% (Spec >= 80.0%)"
             })
 
         # Accumulator Level
-        acc_pct = 100.0 * (self.column.M[0] / self.column.nominal_holdup_vessels)
+        acc_pct = float(100.0 * (self.column.M[0] / self.column.nominal_holdup_vessels))
         if acc_pct < 25.0:
-            alarms.append({"time": self.current_time, "severity": "WARNING", "tag": "LAL-101", "message": f"Reflux accumulator level low: {acc_pct:.1f}%"})
+            alarms.append({
+                "time": self.current_time,
+                "alarm_code": "ALM-LAL101",
+                "severity": "WARNING",
+                "tag": "LAL-101",
+                "current_value": acc_pct,
+                "threshold": 25.0,
+                "message": f"Reflux accumulator level low: {acc_pct:.1f}%"
+            })
         elif acc_pct > 80.0:
-            alarms.append({"time": self.current_time, "severity": "WARNING", "tag": "LAH-101", "message": f"Reflux accumulator level high: {acc_pct:.1f}%"})
+            alarms.append({
+                "time": self.current_time,
+                "alarm_code": "ALM-LAH101",
+                "severity": "WARNING",
+                "tag": "LAH-101",
+                "current_value": acc_pct,
+                "threshold": 80.0,
+                "message": f"Reflux accumulator level high: {acc_pct:.1f}%"
+            })
 
         # Sump Level
-        sump_pct = 100.0 * (self.column.M[-1] / self.column.nominal_holdup_vessels)
+        sump_pct = float(100.0 * (self.column.M[-1] / self.column.nominal_holdup_vessels))
         if sump_pct < 20.0:
-            alarms.append({"time": self.current_time, "severity": "TRIP", "tag": "LALL-102", "message": f"Reboiler dry-out imminent: Sump level = {sump_pct:.1f}%"})
+            alarms.append({
+                "time": self.current_time,
+                "alarm_code": "ALM-LALL102",
+                "severity": "CRITICAL",
+                "tag": "LALL-102",
+                "current_value": sump_pct,
+                "threshold": 20.0,
+                "message": f"Reboiler dry-out imminent: Sump level = {sump_pct:.1f}%"
+            })
         elif sump_pct > 85.0:
-            alarms.append({"time": self.current_time, "severity": "WARNING", "tag": "LAH-102", "message": f"Column base flooded: Sump level = {sump_pct:.1f}%"})
+            alarms.append({
+                "time": self.current_time,
+                "alarm_code": "ALM-LAH102",
+                "severity": "WARNING",
+                "tag": "LAH-102",
+                "current_value": sump_pct,
+                "threshold": 85.0,
+                "message": f"Column base flooded: Sump level = {sump_pct:.1f}%"
+            })
 
         for a in alarms:
             if not any(logged["message"] == a["message"] and abs(logged["time"] - a["time"]) < 5.0 for logged in self.alarm_log):

@@ -1896,10 +1896,17 @@ elif simulation_mode == "Interactive Flowsheet Designer":
         alarms = dyn_eng.check_alarms()
         if alarms:
             for a in alarms:
-                if a["severity"] in ["CRITICAL", "HIGH"]:
-                    st.error(f"🚨 **Alarm {a['alarm_code']}** ({a['tag']}): {a['message']} | Measured: `{a['current_value']:.2f}` (Limit: `{a['threshold']:.2f}`)")
+                code = a.get("alarm_code", a.get("tag", "ALM"))
+                tag = a.get("tag", "UNIT")
+                msg = a.get("message", "Alarm event detected")
+                val = a.get("current_value")
+                lim = a.get("threshold")
+                val_str = f" | Measured: `{val:.2f}` (Limit: `{lim:.2f}`)" if (val is not None and lim is not None) else ""
+                
+                if a.get("severity") in ["CRITICAL", "HIGH", "TRIP"]:
+                    st.error(f"🚨 **Alarm {code}** ({tag}): {msg}{val_str}")
                 else:
-                    st.warning(f"⚠️ **Alarm {a['alarm_code']}** ({a['tag']}): {a['message']} | Measured: `{a['current_value']:.2f}` (Limit: `{a['threshold']:.2f}`)")
+                    st.warning(f"⚠️ **Alarm {code}** ({tag}): {msg}{val_str}")
         else:
             st.success("🟢 **All Safety Alarms Normal**: Liquid holdups and tray temperatures operating within safety interlock boundaries.")
 
