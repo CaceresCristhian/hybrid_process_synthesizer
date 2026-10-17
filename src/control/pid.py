@@ -2,7 +2,7 @@ class PIDController:
     """Discrete-time velocity PID algorithm implementation."""
     
     def __init__(self, kp: float, ki: float, kd: float, dt: float, 
-                 u_min: float, u_max: float):
+                 u_min: float, u_max: float, setpoint: float = 0.0):
         self.kp = kp
         self.ki = ki
         self.kd = kd
@@ -14,7 +14,7 @@ class PIDController:
         self.e_prev = 0.0
         self.e_prev2 = 0.0
         self.u_prev = 0.0
-        self.setpoint = 0.0
+        self.setpoint = setpoint
 
     def reset(self, initial_u: float = 0.0):
         self.e_prev = 0.0

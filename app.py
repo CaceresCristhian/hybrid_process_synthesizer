@@ -147,41 +147,54 @@ st.markdown("""
     <style>
     .main-title {
         font-size: 2.6rem;
-        color: #1e293b;
+        color: #38bdf8;
         font-weight: 800;
         margin-bottom: 0.2rem;
         font-family: 'Inter', sans-serif;
     }
     .subtitle {
         font-size: 1.1rem;
-        color: #0f766e;
+        color: #2dd4bf;
         font-weight: 500;
         margin-bottom: 2rem;
         font-family: 'Inter', sans-serif;
     }
     .section-header {
         font-size: 1.5rem;
-        color: #0f172a;
+        color: #e2e8f0;
         font-weight: 700;
         margin-top: 1.5rem;
         margin-bottom: 1rem;
-        border-bottom: 2px solid #e2e8f0;
+        border-bottom: 2px solid #334155;
         padding-bottom: 0.3rem;
     }
     .metric-card {
-        background-color: #f8fafc;
+        background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+        color: #f8fafc !important;
         padding: 1.2rem;
         border-radius: 12px;
-        border-left: 5px solid #0d9488;
-        box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+        border: 1px solid #334155;
+        border-left: 5px solid #14b8a6;
+        box-shadow: 0 4px 12px -1px rgb(0 0 0 / 0.35);
         margin-bottom: 1rem;
     }
+    .metric-card h5 {
+        color: #2dd4bf !important;
+        margin-top: 0 !important;
+        margin-bottom: 0.5rem !important;
+        font-weight: 700 !important;
+    }
+    .metric-card b {
+        color: #cbd5e1 !important;
+    }
     .warning-card {
-        background-color: #fffbef;
+        background: linear-gradient(135deg, #451a03 0%, #291002 100%);
+        color: #fef3c7 !important;
         padding: 1.2rem;
         border-radius: 12px;
-        border-left: 5px solid #d97706;
-        box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+        border: 1px solid #78350f;
+        border-left: 5px solid #f59e0b;
+        box-shadow: 0 4px 12px -1px rgb(0 0 0 / 0.35);
         margin-bottom: 1rem;
     }
     </style>
@@ -195,10 +208,10 @@ def render_mermaid(code: str):
     <head>
         <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
         <script>
-            mermaid.initialize({{ startOnLoad: true, theme: 'neutral' }});
+            mermaid.initialize({{ startOnLoad: true, theme: 'default' }});
         </script>
     </head>
-    <body style="background-color: transparent; margin: 0; padding: 0;">
+    <body style="background-color: #f8fafc; border-radius: 12px; margin: 0; padding: 12px;">
         <div class="mermaid" style="display: flex; justify-content: center; align-items: center;">
             {code}
         </div>
@@ -317,20 +330,22 @@ Thermodynamics.db_mode = "python" if "Pure Python" in thermo_db_mode else "exter
 
 if simulation_mode == "Jacketed Bioreactor (R-101)":
     st.sidebar.subheader("Bioreactor Configuration")
-    temp_sp = st.sidebar.slider("Temperature Setpoint (K)", 290.15, 330.15, 310.15, 1.0)
-    feed_rate = st.sidebar.slider("Feed Flow Rate (m3/h)", 0.01, 0.5, 0.05, 0.01)
+    temp_sp = st.sidebar.number_input("Temperature Setpoint (K)", min_value=290.15, max_value=330.15, value=310.15, step=1.0, format="%.2f")
+    feed_rate = st.sidebar.number_input("Feed Flow Rate (m3/h)", min_value=0.01, max_value=0.50, value=0.05, step=0.01, format="%.2f")
     
     st.sidebar.subheader("PID Controller Tuning")
-    kp = st.sidebar.slider("Proportional Gain (Kp)", 1.0, 50.0, 15.0, 1.0)
-    ki = st.sidebar.slider("Integral Gain (Ki)", 0.1, 10.0, 2.0, 0.1)
-    kd = st.sidebar.slider("Derivative Gain (Kd)", 0.0, 5.0, 0.5, 0.1)
+    kp = st.sidebar.number_input("Proportional Gain (Kp)", min_value=1.0, max_value=50.0, value=15.0, step=1.0, format="%.1f")
+    ki = st.sidebar.number_input("Integral Gain (Ki)", min_value=0.1, max_value=10.0, value=2.0, step=0.1, format="%.1f")
+    kd = st.sidebar.number_input("Derivative Gain (Kd)", min_value=0.0, max_value=5.0, value=0.5, step=0.1, format="%.1f")
     
-    # Run dynamic bioreactor simulation
-    pid = PIDController(kp=kp, ki=ki, kd=kd, dt=0.05, u_min=0.0, u_max=10.0)
+    # Run dynamic bioreactor simulation (in hours)
+    t_span = np.linspace(0.0, 8.0, 161)
+    dt = float(t_span[1] - t_span[0])
+    pid = PIDController(kp=kp, ki=ki, kd=kd, dt=dt, u_min=-25.0, u_max=35.0, setpoint=temp_sp)
     bioreactor = JacketedBioreactor(
         unit_id="R-101",
         name="Jacketed Bioreactor",
-        volume_init=1.0,
+        volume_init=1.2,
         s_in=180.0,
         u_coeff=600.0,
         area=5.0,
@@ -339,23 +354,47 @@ if simulation_mode == "Jacketed Bioreactor (R-101)":
     )
     
     def bioreactor_kinetics(S, T):
-        temp_factor = np.exp(-((T - 310.15) ** 2) / 50.0)
-        mu_max = 0.4 * temp_factor
-        mu = mu_max * S / (6.0 + S)
-        qp = mu * 0.18 + 0.02
-        return mu, qp, 0.5, 0.01
+        temp_factor = np.exp(-((T - 310.15) ** 2) / 90.0)
+        mu_max = 0.45 * temp_factor
+        mu = mu_max * max(S, 0.0) / (8.0 + max(S, 0.0))
+        qp = mu * 0.35 + 0.03
+        return mu, qp, 0.50, 0.02
 
-    initial_state = [0.1, 120.0, 0.0, 1.2, 298.15, 292.0]
-    
-    # Run dynamic integration
-    t_span = np.linspace(0, 8, 100)
+    # Initial state: [X (g/L), S (g/L), P (g/L), V (m3), T (K), Tj (K)]
+    initial_state = [3.5, 120.0, 0.0, 1.2, 298.15, 298.15]
     y_vals = []
     state = initial_state.copy()
-    dt = 0.08
+    rho_cp = 1000.0 * 4184.0
+    ua_jh = bioreactor.u_coeff * bioreactor.area * 3600.0  # J/(h*K)
+    v_jacket = 0.25  # m3
+    f_jacket_h = 2.5  # m3/h
+    
     for t in t_span:
         y_vals.append(state.copy())
-        derivs = bioreactor.odes(t, state, feed_rate/3600.0, 2.0, 285.0, bioreactor_kinetics)
+        X, S, P, V, T, Tj = state
+        mu, qp, Yxs, m = bioreactor_kinetics(S, T)
+        
+        # Closed-loop PID temperature control adjusts jacket inlet temperature target
+        u_ctrl = pid.compute(temp_sp, T)
+        t_jacket_target = np.clip(temp_sp + u_ctrl, 280.0, 345.0)
+        
+        # Mass balances (time in hours, feed_rate in m3/h)
+        dVdt = feed_rate
+        dXdt = mu * X - (feed_rate / V) * X
+        dSdt = (feed_rate / V) * (bioreactor.s_in - S) - (mu / Yxs + m) * X
+        dPdt = qp * X - (feed_rate / V) * P
+        
+        # Energy balances (in hours, including metabolic heat & jacket heat transfer)
+        q_rxn_jh = (mu * X * V) * 1.8e7  # J/h exothermic metabolic heat
+        q_trans_jh = ua_jh * (T - Tj)
+        dTdt = (feed_rate / V) * (298.15 - T) + (q_rxn_jh - q_trans_jh) / (rho_cp * V)
+        dTjdt = (f_jacket_h / v_jacket) * (t_jacket_target - Tj) + q_trans_jh / (rho_cp * v_jacket)
+        
+        derivs = [dXdt, dSdt, dPdt, dVdt, dTdt, dTjdt]
         state = [state[i] + derivs[i] * dt for i in range(6)]
+        state[0] = max(0.0, state[0])
+        state[1] = max(0.0, state[1])
+        state[2] = max(0.0, state[2])
     
     y_vals = np.array(y_vals)
     
@@ -382,7 +421,7 @@ if simulation_mode == "Jacketed Bioreactor (R-101)":
                 <h5>ASME Vessel Catalog</h5>
                 <b>Calculated Thickness:</b> {t_shell:.2f} mm<br/>
                 <b>ASME Material:</b> SS-316<br/>
-                <b>Max vessel volume:</b> {max_vol:.2f} m³
+                <b>Max Vessel Volume:</b> {max_vol:.2f} m³
             </div>
             """, unsafe_allow_html=True)
         with sub_col2:
@@ -391,15 +430,15 @@ if simulation_mode == "Jacketed Bioreactor (R-101)":
                 <h5>Piping & Feed Line</h5>
                 <b>Calculated NPS:</b> 1.5"<br/>
                 <b>Inside Diameter:</b> 40.9 mm<br/>
-                <b>Pressure drop:</b> 14.5 kPa
+                <b>Pressure Drop:</b> 14.5 kPa
             </div>
             """, unsafe_allow_html=True)
             
         st.markdown(f"""
         <div class="metric-card">
-            <h5>Pump Selection</h5>
-            <b>Calculated Hydraulic Power:</b> {feed_rate/3600 * 14500:.2f} Watts<br/>
-            <b>Catalog Motor Selection:</b> 25 W Nominal Power
+            <h5>Pump Selection & Batch Performance (t = 8 h)</h5>
+            <b>Calculated Hydraulic Power:</b> {feed_rate/3600 * 14500 * 1000:.2f} mW &nbsp;|&nbsp; <b>Catalog Motor:</b> 25 W Nominal<br/>
+            <b>Final Biomass (X):</b> {y_vals[-1, 0]:.1f} g/L &nbsp;|&nbsp; <b>Final Product (P):</b> {y_vals[-1, 2]:.1f} g/L &nbsp;|&nbsp; <b>Final Temp (T):</b> {y_vals[-1, 4]:.2f} K
         </div>
         """, unsafe_allow_html=True)
 
@@ -408,17 +447,17 @@ if simulation_mode == "Jacketed Bioreactor (R-101)":
     plot_col1, plot_col2 = st.columns(2)
     with plot_col1:
         fig_conc = go.Figure()
-        fig_conc.add_trace(go.Scatter(x=t_span, y=y_vals[:, 0], name="Biomass (X)", line=dict(color="#0d9488", width=3)))
-        fig_conc.add_trace(go.Scatter(x=t_span, y=y_vals[:, 1], name="Substrate (S)", line=dict(color="#1e293b", width=2)))
-        fig_conc.add_trace(go.Scatter(x=t_span, y=y_vals[:, 2], name="Product (P)", line=dict(color="#ef4444", width=2)))
+        fig_conc.add_trace(go.Scatter(x=t_span, y=y_vals[:, 0], name="Biomass (X)", line=dict(color="#14b8a6", width=3)))
+        fig_conc.add_trace(go.Scatter(x=t_span, y=y_vals[:, 1], name="Substrate (S)", line=dict(color="#38bdf8", width=3)))
+        fig_conc.add_trace(go.Scatter(x=t_span, y=y_vals[:, 2], name="Product (P)", line=dict(color="#f43f5e", width=3)))
         fig_conc.update_layout(title="Concentration vs. Time", xaxis_title="Time (hours)", yaxis_title="Concentration (g/L)", height=350)
         st.plotly_chart(fig_conc, use_container_width=True)
         
     with plot_col2:
         fig_temp = go.Figure()
-        fig_temp.add_trace(go.Scatter(x=t_span, y=y_vals[:, 4], name="Reactor Temp (T)", line=dict(color="#ef4444", width=3)))
-        fig_temp.add_trace(go.Scatter(x=t_span, y=[temp_sp]*len(t_span), name="Setpoint", line=dict(color="#1e293b", dash="dash")))
-        fig_temp.add_trace(go.Scatter(x=t_span, y=y_vals[:, 5], name="Jacket Temp (Tj)", line=dict(color="#fdba74", width=2)))
+        fig_temp.add_trace(go.Scatter(x=t_span, y=y_vals[:, 4], name="Reactor Temp (T)", line=dict(color="#f43f5e", width=3)))
+        fig_temp.add_trace(go.Scatter(x=t_span, y=[temp_sp]*len(t_span), name="Setpoint", line=dict(color="#facc15", width=2, dash="dash")))
+        fig_temp.add_trace(go.Scatter(x=t_span, y=y_vals[:, 5], name="Jacket Temp (Tj)", line=dict(color="#38bdf8", width=2)))
         fig_temp.update_layout(title="Temperature Control Performance", xaxis_title="Time (hours)", yaxis_title="Temperature (K)", height=350)
         st.plotly_chart(fig_temp, use_container_width=True)
 
@@ -455,21 +494,21 @@ elif simulation_mode == "Distillation Sizing & Hydraulics (C-101)":
     heavy_species = species_map[heavy_name]
     
     st.sidebar.subheader("Distillation Column Configuration")
-    num_stages = st.sidebar.slider("Total Stages (N)", 5, 25, 12, 1)
-    feed_stage = st.sidebar.slider("Feed Stage", 2, num_stages-1, num_stages//2, 1)
-    reflux_ratio = st.sidebar.slider("Reflux Ratio (R)", 0.5, 10.0, 2.5, 0.1)
-    z_f = st.sidebar.slider("Feed Mole Fraction (Light Key)", 0.05, 0.8, 0.25, 0.05)
+    num_stages = int(st.sidebar.number_input("Total Stages (N)", min_value=5, max_value=50, value=12, step=1))
+    feed_stage = int(st.sidebar.number_input("Feed Stage", min_value=2, max_value=max(2, num_stages-1), value=min(num_stages//2, max(2, num_stages-1)), step=1))
+    reflux_ratio = st.sidebar.number_input("Reflux Ratio (R)", min_value=0.5, max_value=20.0, value=2.5, step=0.1, format="%.2f")
+    z_f = st.sidebar.number_input("Feed Mole Fraction (Light Key)", min_value=0.05, max_value=0.95, value=0.25, step=0.05, format="%.2f")
     
-    # Side draws and pump-around input sliders
+    # Side draws and pump-around inputs
     st.sidebar.subheader("Refinery Side Operations (HYSYS-style)")
     enable_draw = st.sidebar.checkbox("Enable Liquid Side Draw")
-    draw_stage = st.sidebar.slider("Side Draw Stage", 2, num_stages-1, 4, 1) if enable_draw else 4
-    draw_frac = st.sidebar.slider("Side Draw Fraction (of liquid)", 0.0, 0.5, 0.1, 0.05) if enable_draw else 0.0
+    draw_stage = int(st.sidebar.number_input("Side Draw Stage", min_value=2, max_value=max(2, num_stages-1), value=min(4, max(2, num_stages-1)), step=1)) if enable_draw else 4
+    draw_frac = st.sidebar.number_input("Side Draw Fraction (of liquid)", min_value=0.0, max_value=0.5, value=0.10, step=0.05, format="%.2f") if enable_draw else 0.0
     
     enable_pa = st.sidebar.checkbox("Enable Pump-Around Loop")
-    pa_draw = st.sidebar.slider("Pump-around Draw Stage", 3, num_stages-1, num_stages-2, 1) if enable_pa else 8
-    pa_return = st.sidebar.slider("Pump-around Return Stage", 2, pa_draw-1, 2, 1) if enable_pa else 3
-    pa_flow = st.sidebar.slider("Pump-around Flow Rate (mol/s)", 0.0, 5.0, 1.5, 0.1) if enable_pa else 0.0
+    pa_draw = int(st.sidebar.number_input("Pump-around Draw Stage", min_value=3, max_value=max(3, num_stages-1), value=max(3, num_stages-2), step=1)) if enable_pa else 8
+    pa_return = int(st.sidebar.number_input("Pump-around Return Stage", min_value=2, max_value=max(2, pa_draw-1), value=2, step=1)) if enable_pa else 3
+    pa_flow = st.sidebar.number_input("Pump-around Flow Rate (mol/s)", min_value=0.0, max_value=10.0, value=1.5, step=0.1, format="%.2f") if enable_pa else 0.0
 
     if light_species.id == heavy_species.id:
         st.warning("Warning: Light and Heavy key components are the same! Standard binary separation is not possible. Please select different agents.")
@@ -552,14 +591,14 @@ elif simulation_mode == "Distillation Sizing & Hydraulics (C-101)":
     plot_col1, plot_col2 = st.columns(2)
     with plot_col1:
         fig_profile = go.Figure()
-        fig_profile.add_trace(go.Scatter(x=result["stages"], y=result["x_light"], name=f"Liquid x ({light_species.name})", line=dict(color="#0d9488", width=3)))
-        fig_profile.add_trace(go.Scatter(x=result["stages"], y=result["y_light"], name=f"Vapor y ({light_species.name})", line=dict(color="#ef4444", width=2)))
+        fig_profile.add_trace(go.Scatter(x=result["stages"], y=result["x_light"], name=f"Liquid x ({light_species.name})", line=dict(color="#14b8a6", width=3)))
+        fig_profile.add_trace(go.Scatter(x=result["stages"], y=result["y_light"], name=f"Vapor y ({light_species.name})", line=dict(color="#f43f5e", width=2)))
         fig_profile.update_layout(title="Composition Profiles", xaxis_title="Stage Number", yaxis_title="Mole Fraction", height=350)
         st.plotly_chart(fig_profile, use_container_width=True)
         
     with plot_col2:
         fig_temp = go.Figure()
-        fig_temp.add_trace(go.Scatter(x=result["stages"], y=result["T"], name="Stage Temperature (T)", line=dict(color="#ef4444", width=3)))
+        fig_temp.add_trace(go.Scatter(x=result["stages"], y=result["T"], name="Stage Temperature (T)", line=dict(color="#f43f5e", width=3)))
         fig_temp.update_layout(title="Temperature Profile along Column", xaxis_title="Stage Number", yaxis_title="Temperature (K)", height=350)
         st.plotly_chart(fig_temp, use_container_width=True)
 
@@ -603,7 +642,7 @@ elif simulation_mode == "Hydrocarbon PT Phase Envelope (PR-EOS)":
     comp2 = species_map[comp2_name]
     
     st.sidebar.subheader("Mixture Fraction Configuration")
-    methane_fraction = st.sidebar.slider(f"{comp1_name} Mole Fraction", 0.05, 0.95, 0.40, 0.05)
+    methane_fraction = st.sidebar.number_input(f"{comp1_name} Mole Fraction", min_value=0.05, max_value=0.95, value=0.40, step=0.05, format="%.2f")
     ethane_fraction = 1.0 - methane_fraction
     
     species_list = [comp1, comp2]
@@ -624,8 +663,8 @@ elif simulation_mode == "Hydrocarbon PT Phase Envelope (PR-EOS)":
         
     # Plot PT-Envelope
     fig_env = go.Figure()
-    fig_env.add_trace(go.Scatter(x=envelope["bubble_T_K"], y=envelope["pressures_kPa"], name="Bubble Point Curve (Liquid)", line=dict(color="#0d9488", width=3)))
-    fig_env.add_trace(go.Scatter(x=envelope["dew_T_K"], y=envelope["pressures_kPa"], name="Dew Point Curve (Vapor)", line=dict(color="#ef4444", width=3, dash="dash")))
+    fig_env.add_trace(go.Scatter(x=envelope["bubble_T_K"], y=envelope["pressures_kPa"], name="Bubble Point Curve (Liquid)", line=dict(color="#14b8a6", width=3)))
+    fig_env.add_trace(go.Scatter(x=envelope["dew_T_K"], y=envelope["pressures_kPa"], name="Dew Point Curve (Vapor)", line=dict(color="#f43f5e", width=3, dash="dash")))
     fig_env.update_layout(
         title=f"{comp1_name}-{comp2_name} PT Phase Envelope ({methane_fraction*100:.0f}% {comp1_name} / {ethane_fraction*100:.0f}% {comp2_name})",
         xaxis_title="Temperature (Kelvin)",
@@ -638,9 +677,9 @@ elif simulation_mode == "Hydrocarbon PT Phase Envelope (PR-EOS)":
     st.write("### Single Point VLE Flash Solver")
     col1, col2 = st.columns(2)
     with col1:
-        test_T = st.slider("Flash Temperature (K)", 100.0, 400.0, 200.0, 5.0)
+        test_T = st.number_input("Flash Temperature (K)", min_value=100.0, max_value=500.0, value=200.0, step=5.0, format="%.2f")
     with col2:
-        test_P = st.slider("Flash Pressure (kPa)", 200.0, 4500.0, 1500.0, 50.0)
+        test_P = st.number_input("Flash Pressure (kPa)", min_value=100.0, max_value=10000.0, value=1500.0, step=50.0, format="%.1f")
         
     res = Thermodynamics.solve_tp_flash(species_list, composition, test_T, test_P * 1000.0)
     
@@ -668,10 +707,10 @@ elif simulation_mode == "Electrolyte Equilibrium & Activity":
         st.subheader("e-NRTL Molalities Configuration")
         col1, col2 = st.columns(2)
         with col1:
-            m_na = st.slider("Sodium Ion (Na+) molality (mol/kg)", 0.0, 5.0, 1.0, 0.1)
-            m_cl = st.slider("Chloride Ion (Cl-) molality (mol/kg)", 0.0, 5.0, 1.0, 0.1)
+            m_na = st.number_input("Sodium Ion (Na+) molality (mol/kg)", min_value=0.0, max_value=10.0, value=1.0, step=0.1, format="%.2f")
+            m_cl = st.number_input("Chloride Ion (Cl-) molality (mol/kg)", min_value=0.0, max_value=10.0, value=1.0, step=0.1, format="%.2f")
         with col2:
-            m_temp = st.slider("System Temperature (K)", 273.15, 373.15, 298.15, 1.0)
+            m_temp = st.number_input("System Temperature (K)", min_value=273.15, max_value=373.15, value=298.15, step=1.0, format="%.2f")
             
         charges = {'Na+': 1, 'Cl-': -1, 'water': 0}
         molalities = {'Na+': m_na, 'Cl-': m_cl, 'water': 55.5}
@@ -687,11 +726,11 @@ elif simulation_mode == "Electrolyte Equilibrium & Activity":
         st.subheader("Chemical Equilibrium Configuration")
         col1, col2 = st.columns(2)
         with col1:
-            total_acid = st.slider("Total Acetic Acid concentration (mol/L)", 0.0, 1.0, 0.1, 0.01)
-            total_base = st.slider("Total Strong Base (NaOH) concentration (mol/L)", 0.0, 1.5, 0.05, 0.01)
+            total_acid = st.number_input("Total Acetic Acid concentration (mol/L)", min_value=0.0, max_value=5.0, value=0.10, step=0.01, format="%.3f")
+            total_base = st.number_input("Total Strong Base (NaOH) concentration (mol/L)", min_value=0.0, max_value=5.0, value=0.05, step=0.01, format="%.3f")
         with col2:
-            total_salt = st.slider("Total Sparingly Soluble Salt MX added (mol/L)", 0.0, 0.1, 0.02, 0.005)
-            e_temp = st.slider("Temperature (K)", 273.15, 373.15, 298.15, 1.0)
+            total_salt = st.number_input("Total Sparingly Soluble Salt MX added (mol/L)", min_value=0.0, max_value=1.0, value=0.020, step=0.005, format="%.3f")
+            e_temp = st.number_input("Temperature (K)", min_value=273.15, max_value=373.15, value=298.15, step=1.0, format="%.2f")
             
         eq = ElectrolyteModel.solve_chemical_equilibrium(total_acid, total_base, total_salt, e_temp)
         
@@ -714,14 +753,14 @@ elif simulation_mode == "Pressure-Flow Network Solver":
     st.write("### Pressure-Flow Valve Dynamics (HYSYS-style)")
     
     st.sidebar.subheader("Pressure Boundaries")
-    p_source = st.sidebar.slider("Inlet Source Pressure (kPa)", 150.0, 500.0, 300.0, 10.0) * 1000.0
-    p_sink = st.sidebar.slider("Outlet Sink Pressure (kPa)", 100.0, 130.0, 101.3, 1.0) * 1000.0
+    p_source = st.sidebar.number_input("Inlet Source Pressure (kPa)", min_value=110.0, max_value=1000.0, value=300.0, step=10.0, format="%.1f") * 1000.0
+    p_sink = st.sidebar.number_input("Outlet Sink Pressure (kPa)", min_value=50.0, max_value=200.0, value=101.3, step=1.0, format="%.1f") * 1000.0
     
     col1, col2 = st.columns(2)
     with col1:
-        v1_open = st.slider("Valve 1 opening fraction", 0.0, 1.0, 0.70, 0.05)
+        v1_open = st.number_input("Valve 1 opening fraction", min_value=0.0, max_value=1.0, value=0.70, step=0.05, format="%.2f")
     with col2:
-        v2_open = st.slider("Valve 2 opening fraction", 0.0, 1.0, 0.50, 0.05)
+        v2_open = st.number_input("Valve 2 opening fraction", min_value=0.0, max_value=1.0, value=0.50, step=0.05, format="%.2f")
         
     p_mid, flow = PressureFlowSolver.solve_series_valves(p_source, p_sink, 0.5, v1_open, 0.5, v2_open)
     
