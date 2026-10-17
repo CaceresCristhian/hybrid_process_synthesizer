@@ -712,3 +712,157 @@ class ChemicalDatabaseLoader:
         """Alias for load_all_species() returning the full component dictionary."""
         return cls.load_all_species()
 
+    # =========================================================================
+    # EXTENDED 15,000+ SPECIES SQLITE CATALOG & SMILES / JOBACK-REID ESTIMATOR
+    # =========================================================================
+
+    @staticmethod
+    def _get_catalog_db_path():
+        from pathlib import Path
+        return Path(__file__).resolve().parents[2] / "data" / "species_catalog.db"
+
+    @classmethod
+    def get_catalog_count(cls) -> int:
+        """Returns the total number of chemical species in the local SQLite catalog."""
+        import sqlite3
+        db_path = cls._get_catalog_db_path()
+        if not db_path.exists():
+            return len(cls.load_all_species())
+        conn = sqlite3.connect(str(db_path))
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM species")
+        cnt = int(cur.fetchone()[0])
+        conn.close()
+        return cnt
+
+    @classmethod
+    def _row_to_species(cls, row: tuple) -> ChemicalSpecies:
+        (
+            sp_id, cas, name, formula, mw, smiles, dipole,
+            tb, tm, tc, pc, vc, omega,
+            cp0, cp1, cp2, cp3, ant_a, ant_b, ant_c, source
+        ) = row
+        return ChemicalSpecies(
+            id=str(sp_id),
+            name=str(name),
+            formula=str(formula),
+            micro=MicroScaleData(
+                molecular_weight=float(mw),
+                electronegativities={"C": 2.55, "H": 2.20, "O": 3.44},
+                dipole_moment=float(dipole) if dipole is not None else 0.0,
+                polarizability=round(float(mw) * 0.12, 2),
+                smiles=str(smiles) if smiles else None,
+            ),
+            macro=MacroScaleData(
+                boiling_point=float(tb),
+                melting_point=float(tm),
+                critical_temperature=float(tc),
+                critical_pressure=float(pc),
+                critical_volume=float(vc),
+                acentric_factor=float(omega),
+                cp_constants=[float(cp0), float(cp1), float(cp2), float(cp3)],
+            ),
+            system=SystemScaleData(
+                antoine_coefficients=[float(ant_a), float(ant_b), float(ant_c)],
+            ),
+        )
+
+    @classmethod
+    def search_catalog(cls, query: str, limit: int = 25) -> list:
+        """
+        Searches the 15,000+ species SQLite catalog by Name, CAS number, Formula, or SMILES.
+        Returns a list of dicts with metadata and a constructed ChemicalSpecies object.
+        """
+        import sqlite3
+        db_path = cls._get_catalog_db_path()
+        if not db_path.exists():
+            return []
+
+        q = query.strip()
+        if not q:
+            return []
+
+        conn = sqlite3.connect(str(db_path))
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT * FROM species
+            WHERE name LIKE ? OR cas LIKE ? OR formula LIKE ? OR id LIKE ?
+            ORDER BY
+                CASE
+                    WHEN LOWER(name) = LOWER(?) THEN 0
+                    WHEN cas = ? THEN 1
+                    WHEN LOWER(formula) = LOWER(?) THEN 2
+                    WHEN LOWER(name) LIKE LOWER(?) THEN 3
+                    ELSE 4
+                END,
+                LENGTH(name) ASC
+            LIMIT ?
+            """,
+            (f"%{q}%", f"%{q}%", f"%{q}%", f"%{q}%", q, q, q, f"{q}%", int(limit)),
+        )
+        rows = cur.fetchall()
+        conn.close()
+
+        results = []
+        for r in rows:
+            sp = cls._row_to_species(r)
+            results.append({
+                "id": sp.id,
+                "cas": r[1],
+                "name": sp.name,
+                "formula": sp.formula,
+                "mw": sp.micro.molecular_weight,
+                "tb": sp.macro.boiling_point,
+                "tc": sp.macro.critical_temperature,
+                "pc_bar": round(sp.macro.critical_pressure / 1e5, 2),
+                "omega": sp.macro.acentric_factor,
+                "smiles": sp.micro.smiles or "",
+                "source": r[20],
+                "species": sp,
+            })
+        return results
+
+    @classmethod
+    def get_species_from_catalog(cls, identifier: str) -> ChemicalSpecies | None:
+        """Fetches a single ChemicalSpecies from the SQLite catalog by exact id, CAS, or name."""
+        import sqlite3
+        db_path = cls._get_catalog_db_path()
+        if not db_path.exists():
+            return cls.load_all_species().get(identifier.lower())
+
+        conn = sqlite3.connect(str(db_path))
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM species WHERE id = ? OR cas = ? OR LOWER(name) = LOWER(?) LIMIT 1",
+            (identifier, identifier, identifier),
+        )
+        row = cur.fetchone()
+        conn.close()
+        if row:
+            return cls._row_to_species(row)
+        return cls.load_all_species().get(identifier.lower())
+
+    @classmethod
+    def estimate_species_from_smiles(
+        cls,
+        smiles: str,
+        name: str = "Custom Molecule",
+        formula: str = "",
+        known_tb: float = None,
+        known_mw: float = None,
+    ) -> ChemicalSpecies:
+        """
+        Option C: Builds a complete ChemicalSpecies object from any organic SMILES string
+        using Joback-Reid (1987) + Lee-Kesler + Thomson-Antoine group contribution.
+        """
+        from src.chemical_phenomena.group_contribution import JobackPropertyEstimator
+        return JobackPropertyEstimator.build_species_from_smiles(
+            smiles=smiles,
+            name=name,
+            formula=formula,
+            known_tb=known_tb,
+            known_mw=known_mw,
+        )
+
+

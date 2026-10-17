@@ -251,3 +251,35 @@ def test_dynamic_distillation_disturbances_and_validation():
     # Unknown disturbance must raise ValueError
     with pytest.raises(ValueError):
         engine.inject_disturbance("NonExistentDisturbance")
+
+
+def test_sqlite_species_catalog_and_joback_estimator():
+    """Verify Option A (15,000+ SQLite species catalog) + Option C (Joback-Reid SMILES estimator & flash)."""
+    # 1. Verify SQLite catalog contains > 10,000 species (Aspen scale)
+    count = ChemicalDatabaseLoader.get_catalog_count()
+    assert count >= 10000
+
+    # 2. Search catalog by name and CAS
+    matches = ChemicalDatabaseLoader.search_catalog("67-63-0")  # Isopropanol CAS
+    assert len(matches) >= 1
+    ipa = matches[0]["species"]
+    assert 350.0 <= ipa.macro.boiling_point <= 360.0
+    assert ipa.macro.critical_temperature > 500.0
+
+    # 3. Synthesize custom molecule via Joback-Reid from SMILES and run TP flash with water
+    custom_sp = ChemicalDatabaseLoader.estimate_species_from_smiles(
+        smiles="CC(=O)OCC", name="Ethyl Acetate", formula="C4H8O2"
+    )
+    assert 335.0 <= custom_sp.macro.boiling_point <= 365.0
+    assert custom_sp.macro.critical_temperature > custom_sp.macro.boiling_point
+    assert len(custom_sp.system.antoine_coefficients) == 3
+
+    water = ChemicalDatabaseLoader.get_water_metadata()
+    flash_res = Thermodynamics.solve_tp_flash(
+        species_list=[custom_sp, water],
+        feed_composition={custom_sp.id: 0.5, "water": 0.5},
+        temperature=355.0,
+        pressure=101325.0,
+    )
+    assert 0.0 <= flash_res["beta"] <= 1.0
+

@@ -515,6 +515,14 @@ species_map_id = {
     "nacl": nacl_sp
 }
 
+# Merge any user-added species from the 15,006-compound SQLite catalog or Joback-Reid SMILES estimator
+if "custom_species_list" not in st.session_state:
+    st.session_state.custom_species_list = {}
+
+for _cid, _csp in st.session_state.custom_species_list.items():
+    species_map[_csp.name] = _csp
+    species_map_id[_csp.id] = _csp
+
 # Sidebar Selection
 st.sidebar.header("Simulation Selectors")
 simulation_mode = st.sidebar.selectbox(
@@ -537,6 +545,73 @@ thermo_db_mode = st.sidebar.radio(
 )
 # Set global mode
 Thermodynamics.db_mode = "python" if "Pure Python" in thermo_db_mode else "external"
+
+# Aspen-style Component Databank Manager (Option A: 15,006 SQLite Catalog + Option C: Joback-Reid SMILES Estimator)
+_catalog_total = ChemicalDatabaseLoader.get_catalog_count()
+with st.sidebar.expander(f"🧪 Component Databank ({_catalog_total:,} Species)", expanded=False):
+    st.caption(
+        f"**Active Simulation Basket:** `{len(species_map)}` components loaded "
+        f"(24 core + `{len(st.session_state.custom_species_list)}` added)."
+    )
+    db_tab_search, db_tab_smiles = st.tabs(["🔎 Search 15k Catalog", "🧬 SMILES / Joback"])
+
+    with db_tab_search:
+        search_q = st.text_input(
+            "Search by Name, CAS, or Formula",
+            placeholder="e.g., Isopropanol, 67-63-0, Styrene, C6H12...",
+            key="catalog_search_query",
+        )
+        if search_q.strip():
+            matches = ChemicalDatabaseLoader.search_catalog(search_q, limit=15)
+            if matches:
+                match_labels = [
+                    f"{m['name']} ({m['formula']}) | CAS: {m['cas']} | Tb={m['tb']:.1f} K"
+                    for m in matches
+                ]
+                sel_idx = st.selectbox(
+                    f"Matches ({len(matches)} shown)",
+                    range(len(matches)),
+                    format_func=lambda idx: match_labels[idx],
+                    key="catalog_match_select",
+                )
+                chosen = matches[sel_idx]
+                st.markdown(
+                    f"**MW:** `{chosen['mw']:.2f} g/mol` · **Tb:** `{chosen['tb']:.1f} K` · "
+                    f"**Tc:** `{chosen['tc']:.1f} K` · **Pc:** `{chosen['pc_bar']:.1f} bar` · "
+                    f"**ω:** `{chosen['omega']:.3f}`  \n*Source: {chosen['source']}*"
+                )
+                if st.button("➕ Add to Active Simulation", key="btn_add_catalog_sp", use_container_width=True):
+                    sp_obj = chosen["species"]
+                    st.session_state.custom_species_list[sp_obj.id] = sp_obj
+                    st.success(f"Added **{sp_obj.name}** (`{sp_obj.id}`) to active components!")
+                    st.rerun()
+            else:
+                st.info("No exact catalog match. Switch to the **SMILES / Joback** tab to synthesize it!")
+
+    with db_tab_smiles:
+        st.caption("Estimate $T_b, T_c, P_c, V_c, \\omega, C_p(T)$, Antoine, & UNIFAC groups via **Joback-Reid (1987)**.")
+        custom_name = st.text_input("Molecule Name", value="Ibuprofen", key="joback_mol_name")
+        custom_smiles = st.text_input("SMILES String", value="CC(C)Cc1ccc(cc1)C(C)C(=O)O", key="joback_mol_smiles")
+        custom_formula = st.text_input("Chemical Formula (optional)", value="C13H18O2", key="joback_mol_formula")
+        if custom_smiles.strip():
+            from src.chemical_phenomena.group_contribution import JobackPropertyEstimator
+            est_preview = JobackPropertyEstimator.estimate_properties(custom_smiles.strip())
+            st.markdown(
+                f"**Est. Tb:** `{est_preview['boiling_point']:.1f} K` · "
+                f"**Tc:** `{est_preview['critical_temperature']:.1f} K` · "
+                f"**Pc:** `{est_preview['critical_pressure']/1e5:.1f} bar` · "
+                f"**ω:** `{est_preview['acentric_factor']:.3f}`  \n"
+                f"**UNIFAC Groups:** `{est_preview['unifac_subgroups']}`"
+            )
+            if st.button("⚗️ Synthesize & Add Molecule", key="btn_add_joback_sp", use_container_width=True):
+                sp_est = ChemicalDatabaseLoader.estimate_species_from_smiles(
+                    smiles=custom_smiles.strip(),
+                    name=custom_name.strip() or "Custom Molecule",
+                    formula=custom_formula.strip(),
+                )
+                st.session_state.custom_species_list[sp_est.id] = sp_est
+                st.success(f"Synthesized **{sp_est.name}** (`{sp_est.id}`) and added to active components!")
+                st.rerun()
 
 if simulation_mode == "Jacketed Bioreactor (R-101)":
     st.sidebar.subheader("Bioreactor Configuration")
