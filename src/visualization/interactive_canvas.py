@@ -1,4 +1,4 @@
-﻿import json
+import json
 from typing import Dict, List, Optional
 from src.visualization.ports import PortRegistry, PortDefinition
 
@@ -98,8 +98,15 @@ class InteractiveCanvasStudio:
                 "compositions": {k: round(v, 3) for k, v in z_dict.items()} if z_dict else {}
             })
 
-        nodes_json_str = json.dumps(nodes_data)
-        conns_json_str = json.dumps(connections_data)
+        def _json_default(obj):
+            if hasattr(obj, "item"):
+                return obj.item()
+            if hasattr(obj, "tolist"):
+                return obj.tolist()
+            return str(obj)
+
+        nodes_json_str = json.dumps(nodes_data, default=_json_default)
+        conns_json_str = json.dumps(connections_data, default=_json_default)
 
         html_template = """
 <!DOCTYPE html>

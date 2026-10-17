@@ -2050,10 +2050,14 @@ elif simulation_mode == "Interactive Flowsheet Designer":
                 # Tuning Rules Comparison Table
                 st.write("##### Synthesized Industrial PID / PI Tuning Rules")
                 t_rows = []
+                valid_rule_keys = []
                 for rule_name, params in tr.items():
+                    if rule_name in ["FOPDT", "methods"] or not isinstance(params, dict):
+                        continue
+                    valid_rule_keys.append(rule_name)
                     t_rows.append({
                         "Rule": rule_name,
-                        "Type": params.get("type", "PID"),
+                        "Type": params.get("type", "PI" if rule_name.endswith("_PI") else "PID"),
                         "Gain Kc": f"{params.get('Kc', 0.0):.4f}",
                         "Integral Time τ_I (s)": f"{params.get('tau_I', 0.0):.2f}" if params.get('tau_I') else "N/A",
                         "Derivative Time τ_D (s)": f"{params.get('tau_D', 0.0):.2f}" if params.get('tau_D') else "0.0",
@@ -2063,7 +2067,7 @@ elif simulation_mode == "Interactive Flowsheet Designer":
                 st.dataframe(t_rows, use_container_width=True)
 
                 # Apply selected tuning
-                rule_options = list(tr.keys())
+                rule_options = valid_rule_keys
                 sel_rule = st.selectbox("Select Tuning Rule to Apply to TC", rule_options, index=rule_options.index("IMC_Moderate") if "IMC_Moderate" in rule_options else 0)
                 if st.button("Apply Selected Tuning to Temperature Controller"):
                     applied = tr[sel_rule]
@@ -2088,7 +2092,7 @@ elif simulation_mode == "Interactive Flowsheet Designer":
             units_list=units_obj_list,
             streams_list=list(streams_obj_map.values()),
             species_map=mapped_sp
-        ) if len(units_obj_list) > 0 else None
+        )
 
         with rep_c1:
             st.write("###### 📦 Flowsheet Model JSON Data Package")
@@ -3999,9 +4003,11 @@ elif simulation_mode == "Interactive Flowsheet Designer":
         """)
 
         # Compile deliverables data
+        deliv_m_bal = FlowsheetSolver.compile_mass_balance(list(streams_obj_map.values()), mapped_sp)
+        deliv_e_bal = FlowsheetSolver.compile_energy_balance(units_obj_list, list(streams_obj_map.values()), mapped_sp)
         fs_deliv = FlowsheetSolver.compile_flowsheet_deliverables(
-            units_list=st.session_state.fs_units,
-            streams_list=st.session_state.fs_streams,
+            units_list=units_obj_map,
+            streams_list=streams_obj_map,
             connections=st.session_state.fs_connections,
             jurisdiction="DUAL"
         )
@@ -4082,30 +4088,30 @@ elif simulation_mode == "Interactive Flowsheet Designer":
             # Build documents dynamically
             pdf_bytes = PDFReportGenerator.build_document(
                 template_id=selected_tid,
-                units_map=st.session_state.fs_units,
-                streams_map=st.session_state.fs_streams,
+                units_map=units_obj_map,
+                streams_map=streams_obj_map,
                 connections=st.session_state.fs_connections,
-                mass_bal=st.session_state.get("fs_mass_balance", {}),
-                energy_bal=st.session_state.get("fs_energy_balance", {}),
-                tea_summary=st.session_state.get("fs_tea_summary", {}),
+                mass_bal=deliv_m_bal,
+                energy_bal=deliv_e_bal,
+                tea_summary=export_econ,
                 title_data=tb_active
             )
 
             html_doc = ReportGenerator.generate_deliverable_html(
                 template_id=selected_tid,
-                units_map=st.session_state.fs_units,
-                streams_map=st.session_state.fs_streams,
+                units_map=units_obj_map,
+                streams_map=streams_obj_map,
                 connections=st.session_state.fs_connections,
-                mass_bal=st.session_state.get("fs_mass_balance", {}),
-                energy_bal=st.session_state.get("fs_energy_balance", {}),
-                tea_summary=st.session_state.get("fs_tea_summary", {}),
+                mass_bal=deliv_m_bal,
+                energy_bal=deliv_e_bal,
+                tea_summary=export_econ,
                 title_data=tb_active,
                 jurisdiction=selected_jur
             )
 
             json_dossier = ReportGenerator.export_flowsheet_json(
-                units_map=st.session_state.fs_units,
-                streams_map=st.session_state.fs_streams,
+                units_map=units_obj_map,
+                streams_map=streams_obj_map,
                 connections_list=st.session_state.fs_connections,
                 metadata={
                     "project": custom_proj,

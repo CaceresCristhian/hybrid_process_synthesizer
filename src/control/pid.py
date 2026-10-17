@@ -14,6 +14,7 @@ class PIDController:
         self.e_prev = 0.0
         self.e_prev2 = 0.0
         self.u_prev = 0.0
+        self.setpoint = 0.0
 
     def reset(self, initial_u: float = 0.0):
         self.e_prev = 0.0
@@ -22,6 +23,7 @@ class PIDController:
 
     def compute(self, setpoint: float, process_variable: float) -> float:
         """Compute control action output using velocity algorithm."""
+        self.setpoint = setpoint
         e = setpoint - process_variable
         
         # Velocity algorithm terms

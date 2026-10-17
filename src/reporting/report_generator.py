@@ -62,7 +62,14 @@ class ReportGenerator:
                     "composition": st.z or {}
                 }
 
-        return json.dumps(data, indent=2)
+        def _json_default(obj):
+            if hasattr(obj, "item"):
+                return obj.item()
+            if hasattr(obj, "tolist"):
+                return obj.tolist()
+            return str(obj)
+
+        return json.dumps(data, indent=2, default=_json_default)
 
     @classmethod
     def generate_engineering_report_html(cls, units_map: dict, streams_map: dict,

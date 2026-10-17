@@ -83,10 +83,17 @@ class Plant3DViewer:
                 "fluid_type": fluid_type
             })
 
+        def _json_default(obj):
+            if hasattr(obj, "item"):
+                return obj.item()
+            if hasattr(obj, "tolist"):
+                return obj.tolist()
+            return str(obj)
+
         data_json = json.dumps({
             "units": equipment_3d,
             "pipes": pipes_3d
-        })
+        }, default=_json_default)
 
         html_template = f"""
 <!DOCTYPE html>

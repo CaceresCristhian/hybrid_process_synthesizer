@@ -73,8 +73,10 @@ class DynamicDistillationColumn(BaseUnit):
         # 3. Sensitive Tray Temperature Controller (TC): measures Tray 3 temperature, controls Reflux flow L
         self.tc = PIDController(kp=0.25, ki=0.03, kd=0.01, dt=1.0, u_min=0.2, u_max=self.nominal_feed_flow * 3.0)
         self.tc.reset(initial_u=self.L_reflux)
+        self.temp_controller = self.tc
         self.sensitive_tray = max(1, min(self.num_stages - 2, 3))
-        self.temp_setpoint = self.T[self.sensitive_tray]
+        self.temp_setpoint = float(self.T[self.sensitive_tray])
+        self.tc.setpoint = self.temp_setpoint
 
         # History logger for strip charts
         self.time_history = [0.0]
@@ -83,14 +85,18 @@ class DynamicDistillationColumn(BaseUnit):
             "xD": [float(self.x[0])],
             "xB": [float(self.x[-1])],
             "x_feed_tray": [float(self.x[self.feed_stage - 1])],
+            "x_sens": [float(self.x[self.sensitive_tray])],
             "T_condenser": [float(self.T[0])],
             "T_sensitive": [float(self.T[self.sensitive_tray])],
             "T_reboiler": [float(self.T[-1])],
+            "M_acc": [float(self.M[0])],
+            "M_sump": [float(self.M[-1])],
             "level_accumulator_pct": [100.0 * float(self.M[0] / self.nominal_holdup_vessels)],
             "level_sump_pct": [100.0 * float(self.M[-1] / self.nominal_holdup_vessels)],
             "reflux_flow": [float(self.L_reflux)],
             "distillate_flow": [float(self.D_distillate)],
             "bottoms_flow": [float(self.B_bottoms)],
+            "vapor_boilup": [float(self.V_boilup)],
             "reboiler_duty_kW": [float(self.heat_duty / 1000.0)]
         }
 
@@ -206,14 +212,18 @@ class DynamicDistillationColumn(BaseUnit):
         self.history["xD"].append(float(self.x[0]))
         self.history["xB"].append(float(self.x[-1]))
         self.history["x_feed_tray"].append(float(self.x[feed_idx]))
+        self.history["x_sens"].append(float(self.x[self.sensitive_tray]))
         self.history["T_condenser"].append(float(self.T[0]))
         self.history["T_sensitive"].append(float(self.T[self.sensitive_tray]))
         self.history["T_reboiler"].append(float(self.T[-1]))
+        self.history["M_acc"].append(float(self.M[0]))
+        self.history["M_sump"].append(float(self.M[-1]))
         self.history["level_accumulator_pct"].append(100.0 * float(self.M[0] / self.nominal_holdup_vessels))
         self.history["level_sump_pct"].append(100.0 * float(self.M[-1] / self.nominal_holdup_vessels))
         self.history["reflux_flow"].append(float(self.L_reflux))
         self.history["distillate_flow"].append(float(self.D_distillate))
         self.history["bottoms_flow"].append(float(self.B_bottoms))
+        self.history["vapor_boilup"].append(float(self.V_boilup))
         self.history["reboiler_duty_kW"].append(float(self.heat_duty / 1000.0))
 
         return {

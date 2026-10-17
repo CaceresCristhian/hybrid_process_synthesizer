@@ -112,6 +112,8 @@ class ContinuousCrystallizer(BaseUnit):
             "residence_time_s": round(tau, 1),
             "growth_rate_um_s": g_growth,
             "nucleation_rate_no_m3_s": b0_nucl,
+            "G_tau_um": round(gt_um, 2),
+            "nuclei_density_n0": float(n0),
             "magma_density_kg_m3": round(magma_density_kg_m3, 2),
             "solids_production_kg_h": round(solids_rate_kg_h, 1),
             "L_10_um": round(l10_um, 1),
