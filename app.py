@@ -522,6 +522,7 @@ if "custom_species_list" not in st.session_state:
 for _cid, _csp in st.session_state.custom_species_list.items():
     species_map[_csp.name] = _csp
     species_map_id[_csp.id] = _csp
+    ChemicalDatabaseLoader.register_runtime_species(_csp)
 
 # Sidebar Selection
 st.sidebar.header("Simulation Selectors")
@@ -3829,30 +3830,28 @@ elif simulation_mode == "Interactive Flowsheet Designer":
                 enabling phase equilibrium predictions for novel compounds without experimental binary interaction parameters.
             """)
 
-            u_col1, u_col2, u_col3 = st.columns(3)
+            u_col1, u_col2, u_col3, u_col4 = st.columns([1.4, 1.4, 1.1, 1.1])
+            all_unifac_ids = list(dict.fromkeys(list(species_map_id.keys()) + list(SPECIES_FRAGMENTS.keys())))
             with u_col1:
-                binary_pairs = [
-                    "Ethanol / Benzene (Minimum-Boiling Azeotrope)",
-                    "Ethanol / Water (Industrial Fermentation Broth)",
-                    "Acetone / Methanol (Polar Solvent System)",
-                    "Octane / Benzene (Petrochemical Hydrocarbons)",
-                    "Acetic Acid / Water (Carboxylic Acid Mixture)"
-                ]
-                sel_pair = st.selectbox("Binary Mixture Selection", binary_pairs, key="unifac_pair_sel")
+                c1_name = st.selectbox(
+                    "Component 1 (Light/Solute)",
+                    all_unifac_ids,
+                    index=all_unifac_ids.index("ethanol") if "ethanol" in all_unifac_ids else 0,
+                    format_func=lambda k: f"{species_map_id[k].name} ({k})" if k in species_map_id else k.capitalize(),
+                    key="unifac_c1_sel",
+                )
             with u_col2:
-                unifac_p_bar = st.slider("System Pressure (bar)", 0.2, 5.0, 1.013, 0.05, key="unifac_p_bar")
+                c2_name = st.selectbox(
+                    "Component 2 (Heavy/Solvent)",
+                    all_unifac_ids,
+                    index=all_unifac_ids.index("benzene") if "benzene" in all_unifac_ids else (1 if len(all_unifac_ids) > 1 else 0),
+                    format_func=lambda k: f"{species_map_id[k].name} ({k})" if k in species_map_id else k.capitalize(),
+                    key="unifac_c2_sel",
+                )
             with u_col3:
-                unifac_temp_k = st.slider("Evaluation Temperature (K)", 280.0, 420.0, 340.0, 5.0, key="unifac_temp_k")
-
-            # Parse components
-            pair_map = {
-                "Ethanol / Benzene (Minimum-Boiling Azeotrope)": ("ethanol", "benzene"),
-                "Ethanol / Water (Industrial Fermentation Broth)": ("ethanol", "water"),
-                "Acetone / Methanol (Polar Solvent System)": ("acetone", "methanol"),
-                "Octane / Benzene (Petrochemical Hydrocarbons)": ("octane", "benzene"),
-                "Acetic Acid / Water (Carboxylic Acid Mixture)": ("acetic_acid", "water")
-            }
-            c1_name, c2_name = pair_map[sel_pair]
+                unifac_p_bar = st.slider("System Pressure (bar)", 0.2, 5.0, 1.013, 0.05, key="unifac_p_bar")
+            with u_col4:
+                unifac_temp_k = st.slider("Evaluation Temp (K)", 280.0, 420.0, 340.0, 5.0, key="unifac_temp_k")
 
             # Generate UNIFAC VLE Diagram
             vle_data = UNIFACModel.generate_vle_diagram(c1_name, c2_name, P_pa=unifac_p_bar * 1e5, num_points=41)
@@ -3969,8 +3968,14 @@ elif simulation_mode == "Interactive Flowsheet Designer":
 
             pc_col1, pc_col2, pc_col3 = st.columns(3)
             with pc_col1:
-                saft_species_list = list(PCSAFT_DATABASE.keys())
-                sel_saft_sp = st.selectbox("Fluid Molecule", saft_species_list, index=saft_species_list.index("water") if "water" in saft_species_list else 0, key="saft_sp_sel")
+                saft_species_list = list(dict.fromkeys(list(PCSAFT_DATABASE.keys()) + list(species_map_id.keys())))
+                sel_saft_sp = st.selectbox(
+                    "Fluid Molecule",
+                    saft_species_list,
+                    index=saft_species_list.index("water") if "water" in saft_species_list else 0,
+                    format_func=lambda k: f"{species_map_id[k].name} ({k})" if k in species_map_id else k.capitalize(),
+                    key="saft_sp_sel",
+                )
             with pc_col2:
                 saft_temp_eval = st.slider("Target Evaluation Temp (K)", 250.0, 550.0, 350.0, 10.0, key="saft_t_eval")
             with pc_col3:

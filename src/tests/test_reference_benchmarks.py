@@ -283,3 +283,47 @@ def test_sqlite_species_catalog_and_joback_estimator():
     )
     assert 0.0 <= flash_res["beta"] <= 1.0
 
+
+def test_universal_15k_species_bridges():
+    """
+    Verify all 5 universal bridges for species outside the original 24-compound list:
+      1. UNIFAC auto-fragmentation from SMILES in the 15,006 catalog
+      2. NRTL / Wilson automatic fallback to UNIFAC when BIPs are absent
+      3. PC-SAFT (m, sigma, eps_k) estimation from critical constants
+      4. Peng-Robinson Chueh-Prausnitz predictive k_ij from critical volumes
+    """
+    from src.chemical_phenomena.unifac import UNIFACModel
+    from src.chemical_phenomena.activity_models import NRTLModel
+    from src.chemical_phenomena.pc_saft import PCSAFTModel
+
+    # Fetch Isopropanol (CAS 67-63-0) from the 15,006 SQLite catalog
+    ipa = ChemicalDatabaseLoader.get_species_from_catalog("67-63-0")
+    assert ipa is not None
+    ChemicalDatabaseLoader.register_runtime_species(ipa)
+
+    # 1. UNIFAC auto-fragmentation from catalog SMILES
+    frags = UNIFACModel.get_species_groups(ipa.id)
+    assert "OH" in frags
+    unifac_res = UNIFACModel.calculate_gammas({ipa.id: 0.2, "water": 0.8}, 355.0)
+    assert unifac_res["gammas"][ipa.id] > 1.2
+
+    # 2. NRTL automatic fallback to UNIFAC for un-tabulated binary pair (Isopropanol - Water)
+    nrtl_gammas = NRTLModel.calculate_gammas({ipa.id: 0.2, "water": 0.8}, 355.0)
+    assert math.isclose(nrtl_gammas[ipa.id], unifac_res["gammas"][ipa.id], rel_tol=1e-5)
+
+    # 3. PC-SAFT critical-point correlation for un-tabulated species
+    saft_params = PCSAFTModel.get_parameters(ipa.id)
+    assert saft_params.m > 1.5
+    assert saft_params.eps_assoc_k > 0.0  # Alcohol association detected
+    z_res = PCSAFTModel.calculate_compressibility(ipa.id, rho_mol_m3=10000.0, T_k=350.0)
+    assert "Z" in z_res
+
+    # 4. Peng-Robinson Chueh-Prausnitz predictive k_ij for un-tabulated pair
+    water = ChemicalDatabaseLoader.get_water_metadata()
+    a_mix, _, _, _, a_p, _, _ = Thermodynamics.calculate_peng_robinson_coefficients(
+        [ipa, water], {ipa.id: 0.5, "water": 0.5}, 350.0, 101325.0
+    )
+    a_ideal = 0.25 * a_p[ipa.id] + 0.5 * math.sqrt(a_p[ipa.id] * a_p["water"]) + 0.25 * a_p["water"]
+    assert not math.isclose(a_mix, a_ideal, rel_tol=1e-4)
+
+

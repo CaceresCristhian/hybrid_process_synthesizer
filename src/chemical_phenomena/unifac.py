@@ -92,14 +92,58 @@ class UNIFACModel:
         return A_MN.get((m, n), 0.0)
 
     @classmethod
-    def get_species_groups(cls, species_name: str) -> Dict[str, int]:
-        """Returns functional group fragmentation for a species."""
+    def get_species_groups(cls, species_name: str, smiles: Optional[str] = None) -> Dict[str, int]:
+        """Returns functional group fragmentation for any species (via table, SMILES, or 15k catalog)."""
         sp = species_name.lower().replace(" ", "_")
         if sp in SPECIES_FRAGMENTS:
             return SPECIES_FRAGMENTS[sp]
+
+        # Resolve SMILES from catalog or runtime loader if not explicitly passed
+        smi = smiles
+        if not smi:
+            try:
+                from src.database.loader import ChemicalDatabaseLoader
+                sp_obj = ChemicalDatabaseLoader.get_species_from_catalog(species_name)
+                if sp_obj and sp_obj.micro and sp_obj.micro.smiles:
+                    smi = sp_obj.micro.smiles
+            except Exception:
+                smi = None
+
+        if smi:
+            if smi in ("O", "[H]O[H]"):
+                return {"H2O": 1}
+            try:
+                from src.chemical_phenomena.group_contribution import JobackPropertyEstimator
+                j_groups = JobackPropertyEstimator.parse_smiles_groups(smi)
+                u_map = {
+                    "-CH3": "CH3",
+                    "-CH2-": "CH2",
+                    ">CH-": "CH",
+                    ">C<": "C",
+                    "=CH2": "CH2=CH",
+                    "ring-CH2-": "CH2",
+                    "ring=CH-": "ACH",
+                    "ring=C<": "AC",
+                    "-OH": "OH",
+                    "-OH(phenol)": "OH",
+                    ">C=O": "CH2CO",
+                    "-CHO": "CHO",
+                    "-COOH": "COOH",
+                    "-COO-": "COO",
+                }
+                frags: Dict[str, int] = {}
+                for jg, cnt in j_groups.items():
+                    ug = u_map.get(jg)
+                    if ug and ug in SUBGROUPS and cnt > 0:
+                        frags[ug] = frags.get(ug, 0) + cnt
+                if frags:
+                    return frags
+            except Exception:
+                pass
+
         # Fallback heuristic
-        if "alcohol" in sp:
-            return {"CH3": 1, "CH2": 1, "OH": 1}
+        if "alcohol" in sp or sp.endswith("ol"):
+            return {"CH3": 1, "CH2": 2, "OH": 1}
         if "acid" in sp:
             return {"CH3": 1, "COOH": 1}
         return {"CH3": 2, "CH2": 4}
@@ -221,24 +265,14 @@ class UNIFACModel:
     def generate_vle_diagram(cls, comp1: str, comp2: str, P_pa: float = 101325.0,
                              num_points: int = 41) -> Dict[str, Any]:
         """
-        Generates isobaric T-x-y boiling point curve using UNIFAC activity coefficients.
+        Generates isobaric T-x-y boiling point curve using UNIFAC activity coefficients
+        for any pair of species in the 15,006-compound catalog.
         """
-        # Boiling point approximations
         t_boil = {
             "ethanol": 351.5, "water": 373.15, "methanol": 337.8,
             "acetone": 329.4, "benzene": 353.25, "toluene": 383.75,
             "octane": 398.8, "hexane": 341.9, "acetic_acid": 391.2
         }
-        tb1 = t_boil.get(comp1.lower(), 350.0)
-        tb2 = t_boil.get(comp2.lower(), 370.0)
-
-        x1_vals = np.linspace(0.001, 0.999, num_points)
-        y1_vals = []
-        t_vals = []
-        gamma1_vals = []
-        gamma2_vals = []
-
-        # Antoine approximations for saturation pressure (Pa): log10(P_bar) = A - B/(T + C)
         antoine = {
             "ethanol": [5.24677, 1598.673, -46.424],
             "water": [5.20389, 1733.926, -39.485],
@@ -248,11 +282,41 @@ class UNIFACModel:
             "toluene": [4.07827, 1343.943, -53.773],
             "octane": [4.04867, 1355.126, -63.633]
         }
-        ant1 = antoine.get(comp1.lower(), [5.0, 1500.0, -40.0])
-        ant2 = antoine.get(comp2.lower(), [5.0, 1600.0, -40.0])
+
+        tb1 = t_boil.get(comp1.lower())
+        tb2 = t_boil.get(comp2.lower())
+        ant1 = antoine.get(comp1.lower())
+        ant2 = antoine.get(comp2.lower())
+
+        try:
+            from src.database.loader import ChemicalDatabaseLoader
+            sp1_obj = ChemicalDatabaseLoader.get_species_from_catalog(comp1)
+            sp2_obj = ChemicalDatabaseLoader.get_species_from_catalog(comp2)
+            if sp1_obj:
+                tb1 = tb1 or sp1_obj.macro.boiling_point
+                if not ant1 and sp1_obj.system.antoine_coefficients and any(sp1_obj.system.antoine_coefficients):
+                    ant1 = sp1_obj.system.antoine_coefficients
+            if sp2_obj:
+                tb2 = tb2 or sp2_obj.macro.boiling_point
+                if not ant2 and sp2_obj.system.antoine_coefficients and any(sp2_obj.system.antoine_coefficients):
+                    ant2 = sp2_obj.system.antoine_coefficients
+        except Exception:
+            pass
+
+        tb1 = tb1 or 350.0
+        tb2 = tb2 or 370.0
+        ant1 = ant1 or [5.0, 1500.0, -40.0]
+        ant2 = ant2 or [5.0, 1600.0, -40.0]
+
+        x1_vals = np.linspace(0.001, 0.999, num_points)
+        y1_vals = []
+        t_vals = []
+        gamma1_vals = []
+        gamma2_vals = []
 
         def p_sat(ant, temp):
-            p_bar = 10.0 ** (ant[0] - ant[1] / (temp + ant[2]))
+            denom = max(15.0, temp + ant[2])
+            p_bar = 10.0 ** max(-8.0, min(5.0, ant[0] - ant[1] / denom))
             return max(1.0, p_bar * 1e5)
 
         azeotrope_found = False

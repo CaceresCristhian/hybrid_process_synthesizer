@@ -5,6 +5,7 @@ dispersion attraction (a_disp), and directional hydrogen-bonding association (a_
 Based on Gross & Sadowski (2001, 2002).
 """
 
+import math
 import numpy as np
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Any, Optional
@@ -72,10 +73,50 @@ class PCSAFTModel:
 
     @classmethod
     def get_parameters(cls, species_name: str) -> PCSAFTParameters:
-        """Retrieves PC-SAFT molecular parameters."""
+        """
+        Retrieves PC-SAFT molecular parameters (m, sigma, eps/k, association).
+        If not in the 14-compound reference table, estimates (m, sigma, eps/k)
+        from the species' critical constants (Tc, Pc, omega, MW) in the 15,006-species catalog
+        using the Tihic / Gross-Sadowski corresponding-states correlation.
+        """
         sp = species_name.lower().replace(" ", "_")
         if sp in PCSAFT_DATABASE:
             return PCSAFT_DATABASE[sp]
+
+        try:
+            from src.database.loader import ChemicalDatabaseLoader
+            sp_obj = ChemicalDatabaseLoader.get_species_from_catalog(species_name)
+            if sp_obj is not None:
+                tc = float(sp_obj.macro.critical_temperature)
+                pc_bar = max(1.0, float(sp_obj.macro.critical_pressure) / 1e5)
+                omega = float(sp_obj.macro.acentric_factor or 0.2)
+                mw = float(sp_obj.micro.molecular_weight or 80.0)
+                smi = sp_obj.micro.smiles or ""
+
+                # Gross-Sadowski / Tihic critical-point correlation for segment number m, eps/k, and sigma:
+                m_est = max(1.0, min(12.0, 1.0 + 4.45 * max(0.0, omega) + 0.0085 * max(0.0, mw - 16.0)))
+                eps_k_est = max(80.0, min(550.0, tc / (1.28 + 0.34 * math.log(m_est))))
+                # Segment volume m * sigma^3 proportional to R * Tc / Pc
+                v_seg = (83.1446 * tc / pc_bar) * 0.215  # cm^3/mol -> A^3/molecule scaling
+                sigma_est = max(2.6, min(4.8, (v_seg / m_est) ** (1.0 / 3.0)))
+
+                # Hydrogen-bonding association check (OH, COOH, NH2)
+                is_assoc = ("O" in smi and ("CO" in smi or smi.endswith("O") or "O(" in smi)) or "N" in smi
+                eps_assoc = 2400.0 if is_assoc else 0.0
+                kappa_assoc = 0.030 if is_assoc else 0.0
+
+                return PCSAFTParameters(
+                    name=sp_obj.name,
+                    m=round(m_est, 4),
+                    sigma=round(sigma_est, 4),
+                    eps_k=round(eps_k_est, 2),
+                    eps_assoc_k=eps_assoc,
+                    kappa_assoc=kappa_assoc,
+                    mw=round(mw, 3),
+                )
+        except Exception:
+            pass
+
         # Default fallback to octane-like fluid
         return PCSAFTParameters(species_name, 3.5, 3.8, 240.0, mw=100.0)
 

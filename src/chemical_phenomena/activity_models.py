@@ -70,6 +70,7 @@ class NRTLModel:
         tau = np.zeros((n, n))
         G = np.zeros((n, n))
 
+        has_any_bip = False
         for i in range(n):
             for j in range(n):
                 if i == j:
@@ -77,9 +78,20 @@ class NRTLModel:
                     G[i, j] = 1.0
                 else:
                     params = cls.get_binary_params(species[i], species[j])
+                    if params["a_12"] != 0.0 or params["b_12"] != 0.0:
+                        has_any_bip = True
                     tau[i, j] = params["a_12"] + params["b_12"] / T
                     alpha = params["alpha"]
                     G[i, j] = np.exp(-alpha * tau[i, j])
+
+        if not has_any_bip:
+            # Universal predictive fallback via UNIFAC group contribution for any of the 15,006 catalog species
+            try:
+                from src.chemical_phenomena.unifac import UNIFACModel
+                unifac_res = UNIFACModel.calculate_gammas(composition, T)
+                return unifac_res["gammas"]
+            except Exception:
+                pass
 
         ln_gamma = np.zeros(n)
         for i in range(n):
@@ -130,15 +142,26 @@ class WilsonModel:
         R = GAS_CONSTANT_R
 
         Lambda = np.zeros((n, n))
+        has_any_bip = False
         for i in range(n):
             for j in range(n):
                 if i == j:
                     Lambda[i, j] = 1.0
                 else:
                     params = cls.get_binary_params(species[i], species[j])
+                    if params["lambda_12"] != 0.0 or params["lambda_21"] != 0.0:
+                        has_any_bip = True
                     v_ratio = params["v2"] / max(1e-15, params["v1"])
                     energy = params["lambda_12"]
                     Lambda[i, j] = v_ratio * np.exp(-energy / (R * T))
+
+        if not has_any_bip:
+            try:
+                from src.chemical_phenomena.unifac import UNIFACModel
+                unifac_res = UNIFACModel.calculate_gammas(composition, T)
+                return unifac_res["gammas"]
+            except Exception:
+                pass
 
         ln_gamma = np.zeros(n)
         for i in range(n):

@@ -695,9 +695,17 @@ class ChemicalDatabaseLoader:
                 "water": cls.get_water_metadata()
             }
 
+    _runtime_species: dict = {}
+
+    @classmethod
+    def register_runtime_species(cls, sp: ChemicalSpecies):
+        """Registers a catalog or SMILES-synthesized species into the active runtime species pool."""
+        if sp and sp.id:
+            cls._runtime_species[sp.id] = sp
+
     @classmethod
     def load_all_species(cls) -> dict:
-        """Loads all registered ChemicalSpecies objects keyed by species id."""
+        """Loads all built-in and user-registered runtime ChemicalSpecies objects keyed by species id."""
         species = {}
         for attr_name in dir(cls):
             if attr_name.startswith("get_") and attr_name.endswith("_metadata"):
@@ -705,6 +713,7 @@ class ChemicalDatabaseLoader:
                 if callable(fn):
                     sp = fn()
                     species[sp.id] = sp
+        species.update(cls._runtime_species)
         return species
 
     @classmethod

@@ -142,12 +142,21 @@ class Thermodynamics:
         for sp_i in species_list:
             x_i = composition.get(sp_i.id, 0.0)
             a_ij[sp_i.id] = {}
+            vc_i = float(sp_i.macro.critical_volume or 0.20)
             for sp_j in species_list:
                 x_j = composition.get(sp_j.id, 0.0)
                 if sp_i.id == sp_j.id:
                     k_ij = 0.0
+                elif (sp_i.id, sp_j.id) in k_ij_table:
+                    k_ij = k_ij_table[(sp_i.id, sp_j.id)]
+                elif (sp_j.id, sp_i.id) in k_ij_table:
+                    k_ij = k_ij_table[(sp_j.id, sp_i.id)]
                 else:
-                    k_ij = k_ij_table.get((sp_i.id, sp_j.id), k_ij_table.get((sp_j.id, sp_i.id), 0.0))
+                    # Chueh-Prausnitz (1967) predictive binary interaction correlation from Vc_i, Vc_j
+                    vc_j = float(sp_j.macro.critical_volume or 0.20)
+                    v_num = 2.0 * ((vc_i * vc_j) ** (1.0 / 6.0))
+                    v_den = max(1e-6, (vc_i ** (1.0 / 3.0)) + (vc_j ** (1.0 / 3.0)))
+                    k_ij = float(np.clip(1.0 - (v_num / v_den) ** 3, -0.10, 0.18))
                 a_term = (1.0 - k_ij) * np.sqrt(a_pure[sp_i.id] * a_pure[sp_j.id])
                 a_ij[sp_i.id][sp_j.id] = a_term
                 a_m += x_i * x_j * a_term
