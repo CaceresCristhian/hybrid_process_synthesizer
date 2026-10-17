@@ -1,5 +1,5 @@
-# Physical Constants
-GAS_CONSTANT_R = 8.314  # J / (mol * K)
+# Physical Constants (CODATA 2018 / NIST Reference)
+GAS_CONSTANT_R = 8.314462618  # J / (mol * K)
 GRAVITATIONAL_ACCELERATION_G = 9.80665  # m/s^2
 STANDARD_TEMPERATURE_K = 273.15  # Kelvin at 0 C
 STANDARD_PRESSURE_PA = 101325.0  # Pascals (1 atm)

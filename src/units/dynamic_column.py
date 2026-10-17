@@ -50,10 +50,14 @@ class DynamicDistillationColumn(BaseUnit):
         self.T = np.zeros(self.num_stages)
         self._update_vle_and_temperatures()
 
-        # Operational flow rates (mol/s)
+        # Operational flow rates (mol/s) and thermal parameters
         self.F_feed = self.nominal_feed_flow
         self.z_feed = 0.50
         self.T_feed = 340.0
+        self.condenser_cooling_factor = 1.00
+        self.manual_reflux = False
+        self.light_id = kwargs.get("light_id", "ethanol")
+        self.heavy_id = kwargs.get("heavy_id", "water")
 
         self.V_boilup = self.nominal_feed_flow * 0.75
         self.L_reflux = self.reflux_ratio * (self.nominal_feed_flow * 0.4)
@@ -63,20 +67,19 @@ class DynamicDistillationColumn(BaseUnit):
 
         # Multi-loop PID Controllers
         # 1. Accumulator Level Controller (LC_D): controls Distillate flow D
-        self.lc_d = PIDController(kp=0.08, ki=0.015, kd=0.005, dt=1.0, u_min=0.1, u_max=self.nominal_feed_flow * 2.0)
-        self.lc_d.reset(initial_u=self.D_distillate)
+        self.lc_d = PIDController(kp=0.08, ki=0.015, kd=0.005, dt=1.0, u_min=0.1, u_max=self.nominal_feed_flow * 2.0, setpoint=self.nominal_holdup_vessels)
+        self.lc_d.reset(initial_u=self.D_distillate, initial_pv=self.M[0], setpoint=self.nominal_holdup_vessels)
 
         # 2. Sump Level Controller (LC_B): controls Bottoms flow B
-        self.lc_b = PIDController(kp=0.08, ki=0.015, kd=0.005, dt=1.0, u_min=0.1, u_max=self.nominal_feed_flow * 2.0)
-        self.lc_b.reset(initial_u=self.B_bottoms)
+        self.lc_b = PIDController(kp=0.08, ki=0.015, kd=0.005, dt=1.0, u_min=0.1, u_max=self.nominal_feed_flow * 2.0, setpoint=self.nominal_holdup_vessels)
+        self.lc_b.reset(initial_u=self.B_bottoms, initial_pv=self.M[-1], setpoint=self.nominal_holdup_vessels)
 
         # 3. Sensitive Tray Temperature Controller (TC): measures Tray 3 temperature, controls Reflux flow L
         self.tc = PIDController(kp=0.25, ki=0.03, kd=0.01, dt=1.0, u_min=0.2, u_max=self.nominal_feed_flow * 3.0)
-        self.tc.reset(initial_u=self.L_reflux)
         self.temp_controller = self.tc
         self.sensitive_tray = max(1, min(self.num_stages - 2, 3))
         self.temp_setpoint = float(self.T[self.sensitive_tray])
-        self.tc.setpoint = self.temp_setpoint
+        self.tc.reset(initial_u=self.L_reflux, initial_pv=self.T[self.sensitive_tray], setpoint=self.temp_setpoint)
 
         # History logger for strip charts
         self.time_history = [0.0]
@@ -109,15 +112,20 @@ class DynamicDistillationColumn(BaseUnit):
             self.T[i] = xi * self.Tb_light + (1.0 - xi) * self.Tb_heavy
 
     def get_tray_liquid_flows(self) -> np.ndarray:
-        """Calculates liquid flow leaving each stage via hydraulic holdup relationship."""
+        """Calculates liquid flow leaving each stage via linearized Francis weir hydraulics."""
         L = np.zeros(self.num_stages)
-        # Stage 0 (Accumulator): L[0] is reflux back to Stage 1
-        L[0] = max(0.0, self.L_reflux)
+        # Stage 0 (Accumulator): L[0] is reflux back to Stage 1 (reduced if condenser cooling fails)
+        L[0] = max(0.0, self.L_reflux * self.condenser_cooling_factor)
         
-        # Intermediate trays 1..N-2: Francis weir linearized response
+        feed_idx = self.feed_stage - 1
+        # Thermal quality q_feed > 1 when subcooled below 340 K
+        q_feed = 1.0 + max(-0.3, min(0.5, (340.0 - self.T_feed) * 75.3 / self.delta_H_vap))
+
+        # Intermediate trays 1..N-2: Francis weir response around section baseline
         for i in range(1, self.num_stages - 1):
             delta_m = self.M[i] - self.nominal_holdup_tray
-            l_flow = (self.L_reflux + self.F_feed * 0.5) + (delta_m / self.tau_liquid)
+            base_l = L[0] if i < feed_idx else (L[0] + self.F_feed * q_feed * 0.5)
+            l_flow = base_l + (delta_m / self.tau_liquid)
             L[i] = max(0.01, l_flow)
 
         # Stage N-1 (Reboiler Sump): liquid leaves as bottoms discharge B
@@ -131,25 +139,25 @@ class DynamicDistillationColumn(BaseUnit):
         return V
 
     def step(self, dt: float = 1.0):
-        """Advances dynamic column state by dt seconds using adaptive sub-stepping for stiff ODE stability."""
-        # Sub-step to ensure explicit integration stability (dt_sub <= 0.02s)
+        """Advances dynamic column state by dt seconds."""
         n_sub = max(1, int(np.ceil(dt / 0.02)))
         dt_sub = dt / n_sub
+        feed_idx = self.feed_stage - 1
+        cw_factor = getattr(self, "condenser_cooling_factor", 1.0)
 
         for _ in range(n_sub):
-            # 1. Evaluate current hydraulics and flows
             L = self.get_tray_liquid_flows()
             V = self.get_stage_vapor_flows()
 
-            # 2. Compute time derivatives dM/dt and dx/dt
             dM_dt = np.zeros(self.num_stages)
             dx_dt = np.zeros(self.num_stages)
 
-            feed_idx = self.feed_stage - 1
-
-            # Stage 0: Total Condenser / Reflux Drum
-            dM_dt[0] = V[1] - L[0] - self.D_distillate
-            dx_dt[0] = (V[1] / max(1.0, self.M[0])) * (self.y[1] - self.x[0])
+            # Stage 0: Total Condenser / Reflux Drum (condensation rate scales with cw_factor)
+            v_condensed = V[1] * cw_factor
+            dM_dt[0] = v_condensed - L[0] - self.D_distillate
+            # Uncondensed vapor carry-over degrades overhead purity when cooling water fails
+            eff_y1 = self.y[1] * cw_factor + self.x[1] * (1.0 - cw_factor)
+            dx_dt[0] = (V[1] / max(1.0, self.M[0])) * (eff_y1 - self.x[0])
 
             # Intermediate trays 1..N-2
             for i in range(1, self.num_stages - 1):
@@ -171,39 +179,39 @@ class DynamicDistillationColumn(BaseUnit):
             dM_dt[-1] = l_in_sump - V[-1] - self.B_bottoms
             dx_dt[-1] = (l_in_sump / max(1.0, self.M[-1])) * (self.x[-2] - self.x[-1]) - (V[-1] / max(1.0, self.M[-1])) * (self.y[-1] - self.x[-1])
 
-            # Integration sub-step
             self.M = np.maximum(0.5, self.M + dM_dt * dt_sub)
             self.x = np.clip(self.x + dx_dt * dt_sub, 0.001, 0.999)
             self._update_vle_and_temperatures()
 
-        # 4. Multi-Loop PID Controller Evaluations (evaluated at primary time step)
-        # Accumulator level loop (SP = nominal_holdup_vessels)
+        # 4. Multi-Loop PID Controller Evaluations (synced with step dt)
         acc_pv = self.M[0]
-        self.D_distillate = self.lc_d.compute(setpoint=self.nominal_holdup_vessels, process_variable=acc_pv)
+        self.D_distillate = self.lc_d.compute(setpoint=self.nominal_holdup_vessels, process_variable=acc_pv, dt=dt)
 
-        # Sump level loop (SP = nominal_holdup_vessels)
         sump_pv = self.M[-1]
-        self.B_bottoms = self.lc_b.compute(setpoint=self.nominal_holdup_vessels, process_variable=sump_pv)
+        self.B_bottoms = self.lc_b.compute(setpoint=self.nominal_holdup_vessels, process_variable=sump_pv, dt=dt)
 
-        # Tray temperature loop (SP = temp_setpoint)
         t_pv = self.T[self.sensitive_tray]
         if not getattr(self, "manual_reflux", False):
-            # Direct action: higher temperature requires more reflux cooling
-            l_action = self.tc.compute(setpoint=self.temp_setpoint, process_variable=t_pv)
+            # Higher tray temperature requires higher reflux flow (reverse error sign for cooling action)
+            l_action = self.tc.compute(setpoint=t_pv, process_variable=self.temp_setpoint, dt=dt)
             self.L_reflux = max(0.1, l_action)
         self.reflux_ratio = self.L_reflux / max(0.01, self.D_distillate)
 
         # Update reboiler duty
         self.heat_duty = self.V_boilup * self.delta_H_vap
 
-        # 5. Propagate stream outlets if connected
+        # 5. Propagate stream outlets if connected (preserving inlet component keys when available)
         if len(self.outlets) >= 2:
+            lk_key, hk_key = self.light_id, self.heavy_id
+            if self.inlets and self.inlets[0].z and len(self.inlets[0].z) >= 2:
+                keys = list(self.inlets[0].z.keys())
+                lk_key, hk_key = keys[0], keys[1]
             self.outlets[0].F = self.D_distillate
             self.outlets[0].T = self.T[0]
-            self.outlets[0].z = {"light": float(self.x[0]), "heavy": float(1.0 - self.x[0])}
+            self.outlets[0].z = {lk_key: float(self.x[0]), hk_key: float(1.0 - self.x[0])}
             self.outlets[1].F = self.B_bottoms
             self.outlets[1].T = self.T[-1]
-            self.outlets[1].z = {"light": float(self.x[-1]), "heavy": float(1.0 - self.x[-1])}
+            self.outlets[1].z = {lk_key: float(self.x[-1]), hk_key: float(1.0 - self.x[-1])}
 
         # 6. Record history
         curr_time = self.time_history[-1] + dt

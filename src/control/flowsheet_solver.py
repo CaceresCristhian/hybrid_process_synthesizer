@@ -96,12 +96,26 @@ class FlowsheetSolver:
         """
         Robust sequential modular flowsheet topology solver.
         Solves multi-unit chains in forward sequence regardless of naming/alphabetical order,
-        and converges recycle loops iteratively.
+        and converges recycle loops iteratively. Reports strict convergence (max_delta < tolerance)
+        and records any per-unit execution errors.
         """
+        import logging
+        logger = logging.getLogger(__name__)
         solved_units = set()
+        unit_errors = {}
         converged = False
         last_max_delta = 1.0
         p = 0
+
+        if not units_map:
+            return {
+                "converged": True,
+                "passes": 0,
+                "max_delta": 0.0,
+                "solved_units_count": 0,
+                "total_units_count": 0,
+                "unit_errors": {}
+            }
         
         for p in range(max_passes):
             # Snapshot stream flows and temperatures
@@ -118,8 +132,10 @@ class FlowsheetSolver:
                         try:
                             unit.run_simulation((0, 0), [], species_map=species_map)
                             solved_units.add(uid)
-                        except Exception:
-                            pass
+                            unit_errors.pop(uid, None)
+                        except Exception as exc:
+                            logger.warning("Unit '%s' failed during flowsheet pass %d: %s", uid, p + 1, exc)
+                            unit_errors[uid] = str(exc)
                             
             # Check convergence across all streams
             deltas = []
@@ -135,16 +151,17 @@ class FlowsheetSolver:
                     deltas.append(1.0)
                     
             last_max_delta = max(deltas) if deltas else 0.0
-            if deltas and last_max_delta < tolerance and len(solved_units) > 0:
+            if deltas and last_max_delta < tolerance and len(solved_units) == len(units_map) and not unit_errors:
                 converged = True
                 break
                 
         return {
-            "converged": converged or (len(solved_units) == len(units_map)),
+            "converged": bool(converged),
             "passes": p + 1,
             "max_delta": last_max_delta,
             "solved_units_count": len(solved_units),
-            "total_units_count": len(units_map)
+            "total_units_count": len(units_map),
+            "unit_errors": unit_errors
         }
 
     # ==========================================

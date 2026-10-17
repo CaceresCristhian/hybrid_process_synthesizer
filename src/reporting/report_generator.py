@@ -4,6 +4,7 @@ Produces JSON flowsheet data packages and printable HTML Engineering Data Sheets
 with full mass/energy balance closure, sizing schedules, and Turton & Guthrie TEA costing.
 """
 
+import html
 import json
 from datetime import datetime
 from typing import Dict, List, Any, Optional
@@ -85,6 +86,7 @@ class ReportGenerator:
         """Generates an HTML technical engineering summary report with styling."""
         if project_title:
             plant_name = project_title
+        plant_name = html.escape(str(plant_name), quote=True)
         if econ_results is not None and tea_summary is None:
             tea_summary = econ_results
         tea_summary = tea_summary or {}
@@ -100,12 +102,18 @@ class ReportGenerator:
         # Equipment rows
         eq_rows_html = ""
         for eq in eq_costs:
+            uid_safe = html.escape(str(eq.get('unit_id', '')), quote=True)
+            utype_safe = html.escape(str(eq.get('unit_type', '')), quote=True)
+            mat_safe = html.escape(str(eq.get('material', 'Carbon Steel')), quote=True)
+            sparam_safe = html.escape(str(eq.get('sizing_parameter', '')), quote=True)
+            sval_safe = html.escape(str(eq.get('sizing_value', '')), quote=True)
+            sunit_safe = html.escape(str(eq.get('sizing_unit', '')), quote=True)
             eq_rows_html += f"""
             <tr>
-                <td><strong>{eq.get('unit_id')}</strong></td>
-                <td>{eq.get('unit_type')}</td>
-                <td>{eq.get('material', 'Carbon Steel')}</td>
-                <td>{eq.get('sizing_parameter')}: {eq.get('sizing_value')} {eq.get('sizing_unit')}</td>
+                <td><strong>{uid_safe}</strong></td>
+                <td>{utype_safe}</td>
+                <td>{mat_safe}</td>
+                <td>{sparam_safe}: {sval_safe} {sunit_safe}</td>
                 <td>{eq.get('design_pressure_bar', 1.0):.1f} bar</td>
                 <td>{eq.get('F_P', 1.0):.2f}</td>
                 <td>{eq.get('F_M', 1.0):.2f}</td>
@@ -117,6 +125,7 @@ class ReportGenerator:
         # Stream rows
         stream_rows_html = ""
         for sid, st in streams_map.items():
+            sid = html.escape(str(sid), quote=True)
             t_k = f"{st.T:.1f}" if hasattr(st, "T") and st.T else "N/A"
             p_kpa = f"{st.P/1000.0:.1f}" if hasattr(st, "P") and st.P else "N/A"
             f_mol = f"{st.F:.2f}" if hasattr(st, "F") and st.F is not None else "N/A"

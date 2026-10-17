@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hybrid-process-synthesizer"
+version = "2.5.0"
+description = "Hybrid First-Principles & Physics-Informed Neural Network (PINN) Chemical & Biochemical Process Simulator"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [
+    { name = "Cristian" }
+]
+dependencies = [
+    "streamlit>=1.30.0",
+    "numpy>=1.24.0",
+    "scipy>=1.11.0",
+    "pandas>=2.0.0",
+    "plotly>=5.15.0",
+    "torch>=2.0.0",
+    "pypdf>=3.17.0",
+]
+
+[project.optional-dependencies]
+thermo = [
+    "CoolProp>=6.6.0",
+    "thermo>=0.3.0",
+]
+dev = [
+    "pytest>=7.4.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["src/tests"]
+pythonpath = ["."]
+addopts = "-q"

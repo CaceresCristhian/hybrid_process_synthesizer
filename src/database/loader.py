@@ -694,3 +694,21 @@ class ChemicalDatabaseLoader:
                 "ethanol": cls.get_ethanol_metadata(),
                 "water": cls.get_water_metadata()
             }
+
+    @classmethod
+    def load_all_species(cls) -> dict:
+        """Loads all registered ChemicalSpecies objects keyed by species id."""
+        species = {}
+        for attr_name in dir(cls):
+            if attr_name.startswith("get_") and attr_name.endswith("_metadata"):
+                fn = getattr(cls, attr_name)
+                if callable(fn):
+                    sp = fn()
+                    species[sp.id] = sp
+        return species
+
+    @classmethod
+    def load_species(cls) -> dict:
+        """Alias for load_all_species() returning the full component dictionary."""
+        return cls.load_all_species()
+

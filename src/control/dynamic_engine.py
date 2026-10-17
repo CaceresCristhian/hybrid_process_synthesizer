@@ -39,9 +39,14 @@ class DynamicSimulationEngine:
 
     def trigger_disturbance(self, disturbance_name: str):
         """Activates a process disturbance scenario."""
-        if disturbance_name in self.DISTURBANCE_PRESETS:
+        if disturbance_name == "None":
+            self.active_disturbances.clear()
+            self._apply_disturbances()
+        elif disturbance_name in self.DISTURBANCE_PRESETS:
             self.active_disturbances.add(disturbance_name)
             self._apply_disturbances()
+        else:
+            raise ValueError(f"Unknown disturbance preset: '{disturbance_name}'. Valid presets: {list(self.DISTURBANCE_PRESETS.keys())}")
 
     def clear_disturbance(self, disturbance_name: str):
         """Clears an active disturbance and restores baseline parameter."""
@@ -50,7 +55,7 @@ class DynamicSimulationEngine:
             self._apply_disturbances()
 
     def _apply_disturbances(self):
-        """Applies active disturbances to column parameters."""
+        """Applies active disturbances to column parameters (all 6 scenarios implemented)."""
         # Baseline values
         f_base = self.column.nominal_feed_flow
         z_base = 0.50
@@ -80,6 +85,18 @@ class DynamicSimulationEngine:
             self.column.V_boilup = v_base * 0.80
         else:
             self.column.V_boilup = v_base
+
+        # 5. Cooling Water Failure (-50%): reduces condenser condensation capacity & effective reflux cooling
+        if "Cooling Water Failure (-50%)" in self.active_disturbances:
+            self.column.condenser_cooling_factor = 0.50
+        else:
+            self.column.condenser_cooling_factor = 1.00
+
+        # 6. Reflux Valve Sticking: freezes reflux valve at its current position (disables TC loop action)
+        if "Reflux Valve Sticking" in self.active_disturbances:
+            self.column.manual_reflux = True
+        else:
+            self.column.manual_reflux = False
 
     def check_alarms(self) -> List[Dict[str, Any]]:
         """Monitors column safety interlocks and alarm limits."""
@@ -181,13 +198,14 @@ class DynamicSimulationEngine:
             "feed_composition_drop": "Feed Composition Drop",
             "feed_subcooling": "Feed Subcooling Pulse",
             "cooling_water_failure": "Cooling Water Failure (-50%)",
-            "steam_cut": "Reboiler Steam Cut (-20%)"
+            "steam_cut": "Reboiler Steam Cut (-20%)",
+            "reflux_valve_sticking": "Reflux Valve Sticking",
         }
         resolved = alias_map.get(name, name)
         if resolved in self.DISTURBANCE_PRESETS:
             self.trigger_disturbance(resolved)
         else:
-            self.active_disturbances.add(name)
+            raise ValueError(f"Unknown disturbance '{name}'. Valid options: {list(self.DISTURBANCE_PRESETS.keys())} or {list(alias_map.keys())}")
 
     def get_active_disturbances_summary(self) -> str:
         """Returns readable summary string of active disturbances."""

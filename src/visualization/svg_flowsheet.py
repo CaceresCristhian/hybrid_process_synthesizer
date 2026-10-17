@@ -1,3 +1,6 @@
+import html
+
+
 class SVGFlowsheet:
     """
     Dynamic Process Flow Diagram (PFD) generator that outputs clean vector-based SVGs.
@@ -19,6 +22,8 @@ class SVGFlowsheet:
     def get_symbol_svg(cls, eq_id: str, eq_type: str, x: float, y: float, 
                        variation: str = "Tray Column", tooltip: str = "") -> str:
         """Returns SVG code representing the equipment symbol with hover tooltip."""
+        eq_id = html.escape(str(eq_id), quote=True)
+        tooltip = html.escape(str(tooltip), quote=True) if tooltip else ""
         svg = [f'<g id="node_{eq_id}">']
         if tooltip:
             svg.append(f'  <title>{tooltip}</title>')

@@ -6,7 +6,8 @@ class MaterialStream:
     Tracks specification state of physical variables and propagates information.
     Includes mass and energy calculations for flowsheet-wide balance reports.
     """
-    def __init__(self, stream_id: str, name: str = ""):
+    def __init__(self, stream_id: str, name: str = "", T: float = None, P: float = None,
+                 F: float = None, z: dict = None, H: float = None, Vf: float = None):
         self.stream_id = stream_id
         self.name = name if name else stream_id
         
@@ -17,6 +18,8 @@ class MaterialStream:
         self._z = {}        # Composition (dict of species_id: mole_fraction)
         self._H = None      # Molar Enthalpy in J/mol
         self._Vf = None     # Vapor fraction (0.0 to 1.0)
+        self._x = {}        # Liquid phase composition
+        self._y = {}        # Vapor phase composition
         
         # Specification tracking: True if set by user or unit operation
         self.specs = {
@@ -31,6 +34,19 @@ class MaterialStream:
         # Listeners for propagation (Unit operations connected to this stream)
         self.upstream_unit = None
         self.downstream_units = []
+
+        if T is not None:
+            self.set_val("T", T)
+        if P is not None:
+            self.set_val("P", P)
+        if F is not None:
+            self.set_val("F", F)
+        if z is not None:
+            self.set_val("z", z)
+        if H is not None:
+            self.set_val("H", H)
+        if Vf is not None:
+            self.set_val("Vf", Vf)
 
     @property
     def T(self):
@@ -80,6 +96,14 @@ class MaterialStream:
     def Vf(self, val):
         self.set_val("Vf", val)
 
+    @property
+    def x(self):
+        return self._x
+
+    @property
+    def y(self):
+        return self._y
+
     def set_val(self, prop: str, val, specified: bool = True):
         """Sets a property value and marks its specification state."""
         if val is None:
@@ -108,10 +132,46 @@ class MaterialStream:
         # Propagate changes to connected unit operations
         self.propagate()
 
-    def run_flash(self):
-        """Checks if enough state variables are specified to compute the rest."""
+    def get_degrees_of_freedom(self) -> int:
+        """
+        Calculates Gibbs/Duhem stream degrees of freedom.
+        A material stream requires composition (z), molar flow (F), and 2 intensive
+        state variables among (T, P, Vf, H) to be fully specified (DOF = 0).
+        """
+        intensive_specified = sum(1 for k in ("T", "P", "Vf", "H") if self.specs.get(k, False))
+        intensive_dof = max(0, 2 - intensive_specified)
+        extensive_dof = (0 if self.specs.get("F", False) else 1) + (0 if self.specs.get("z", False) else 1)
+        return intensive_dof + extensive_dof
+
+    def run_flash(self, species_map: dict = None):
+        """
+        Evaluates thermodynamic state (Vf, liquid x, vapor y) when composition z
+        and at least two intensive properties (e.g., T and P) are specified.
+        """
         if not self.specs["z"] or len(self._z) == 0:
-            return  # Composition is required for VLE
+            return
+        if self._T is not None and self._P is not None and not self.specs.get("Vf", False):
+            try:
+                from src.database.loader import ChemicalDatabaseLoader
+                from src.chemical_phenomena.thermodynamics import Thermodynamics
+                sp_lookup = species_map if species_map else ChemicalDatabaseLoader.load_all_species()
+                sp_list = []
+                valid_z = {}
+                for k, v in self._z.items():
+                    if v > 0:
+                        sp_obj = sp_lookup.get(k) or sp_lookup.get(k.lower())
+                        if sp_obj is not None:
+                            sp_list.append(sp_obj)
+                            valid_z[sp_obj.id] = v
+                if sp_list:
+                    tot = sum(valid_z.values())
+                    valid_z = {k: v / tot for k, v in valid_z.items()}
+                    flash_res = Thermodynamics.solve_tp_flash(sp_list, valid_z, float(self._T), float(self._P))
+                    self._Vf = float(flash_res["beta"])
+                    self._x = flash_res["x"]
+                    self._y = flash_res["y"]
+            except Exception:
+                pass
 
     def get_mixture_mw(self, species_map: dict) -> float:
         """Calculates molecular weight of mixture (g/mol)."""
@@ -119,7 +179,7 @@ class MaterialStream:
             return 18.015  # default to water MW
         mw = 0.0
         for sp_id, x in self._z.items():
-            sp = species_map.get(sp_id)
+            sp = species_map.get(sp_id) if species_map else None
             sp_mw = sp.micro.molecular_weight if sp else 18.015
             mw += x * sp_mw
         return mw
@@ -133,21 +193,46 @@ class MaterialStream:
         return self._F * mw * 3.6
 
     def get_enthalpy(self, species_map: dict) -> float:
-        """Calculates molar enthalpy in J/mol."""
+        """
+        Calculates molar enthalpy in J/mol by integrating the polynomial heat capacity
+        Cp(T) = C0 + C1*T + C2*T^2 + C3*T^3 from T_ref = 298.15 K to T, plus the
+        Trouton/Riedel latent heat of vaporization when vapor fraction Vf > 0 and H is not overridden.
+        """
         if self._H is not None:
             return self._H
-            
-        # Fallback calculation if T is set: H = sum( x_i * Cp_i * (T - 298.15) )
+
         if self._T is None:
             return 0.0
-            
+
         t_ref = 298.15
-        h_val = 0.0
+        t_val = float(self._T)
+        h_sensible = 0.0
         for sp_id, x in self._z.items():
-            sp = species_map.get(sp_id)
-            cp = sp.macro.cp_constants[0] if sp and sp.macro.cp_constants else 75.3
-            h_val += x * cp * (self._T - t_ref)
-        return h_val
+            sp = species_map.get(sp_id) if species_map else None
+            coeffs = sp.macro.cp_constants if (sp and sp.macro.cp_constants) else [75.3]
+            c0 = coeffs[0] if len(coeffs) > 0 else 75.3
+            c1 = coeffs[1] if len(coeffs) > 1 else 0.0
+            c2 = coeffs[2] if len(coeffs) > 2 else 0.0
+            c3 = coeffs[3] if len(coeffs) > 3 else 0.0
+            dh_i = (
+                c0 * (t_val - t_ref)
+                + 0.5 * c1 * (t_val**2 - t_ref**2)
+                + (1.0 / 3.0) * c2 * (t_val**3 - t_ref**3)
+                + 0.25 * c3 * (t_val**4 - t_ref**4)
+            )
+            h_sensible += x * dh_i
+
+        # Include latent heat if two-phase/vapor (Vf explicitly set by user or flash unit)
+        h_latent = 0.0
+        if self.specs.get("Vf", False) and self._Vf is not None and self._Vf > 0.0:
+            for sp_id, x in self._z.items():
+                sp = species_map.get(sp_id) if species_map else None
+                tb = sp.macro.boiling_point if sp else 373.15
+                # Trouton-Vetere latent heat estimate: dH_vap ~ 88 * Tb (J/mol)
+                dh_vap_i = 88.0 * tb
+                h_latent += x * dh_vap_i * float(self._Vf)
+
+        return float(h_sensible + h_latent)
 
     def get_energy_flow(self, species_map: dict) -> float:
         """Calculates energy flow rate in kW (kJ/s)."""

@@ -1,30 +1,47 @@
+import html
+
+
 class PIDLayout:
     """Programmatic P&ID Topology model that generates clean Mermaid representations."""
     
     def __init__(self, name: str):
-        self.name = name
+        self.name = html.escape(str(name), quote=True)
         self.nodes = []
         self.edges = []
         self.subgraphs = {} # maps group_name -> list of (node_id, label)
 
     def add_equipment(self, element_id: str, label: str):
-        self.nodes.append((element_id, f'["{label}"]', "equipment"))
+        safe_id = html.escape(str(element_id), quote=True)
+        safe_lbl = html.escape(str(label), quote=True)
+        self.nodes.append((safe_id, f'["{safe_lbl}"]', "equipment"))
 
     def add_valve(self, element_id: str, label: str):
-        self.nodes.append((element_id, f'["{label}"]', "valve"))
+        safe_id = html.escape(str(element_id), quote=True)
+        safe_lbl = html.escape(str(label), quote=True)
+        self.nodes.append((safe_id, f'["{safe_lbl}"]', "valve"))
 
     def add_instrument(self, element_id: str, label: str):
-        self.nodes.append((element_id, f'(("{label}"))', "instrument"))
+        safe_id = html.escape(str(element_id), quote=True)
+        safe_lbl = html.escape(str(label), quote=True)
+        self.nodes.append((safe_id, f'(("{safe_lbl}"))', "instrument"))
 
     def add_subgraph(self, group_name: str, nodes_list: list):
         """Adds a labeled subgraph grouping in the Mermaid diagram."""
-        self.subgraphs[group_name] = nodes_list
+        safe_group = html.escape(str(group_name), quote=True)
+        safe_nodes = [(html.escape(str(nid), quote=True), html.escape(str(nlbl), quote=True)) for nid, nlbl in nodes_list]
+        self.subgraphs[safe_group] = safe_nodes
 
     def add_process_stream(self, from_id: str, to_id: str, label: str = ""):
-        self.edges.append((from_id, to_id, f"|{label}|" if label else ""))
+        safe_from = html.escape(str(from_id), quote=True)
+        safe_to = html.escape(str(to_id), quote=True)
+        safe_lbl = html.escape(str(label), quote=True) if label else ""
+        self.edges.append((safe_from, safe_to, f"|{safe_lbl}|" if safe_lbl else ""))
 
     def add_control_signal(self, from_id: str, to_id: str, label: str = ""):
-        self.edges.append((from_id, to_id, f"-.->|{label}|" if label else "-.->"))
+        safe_from = html.escape(str(from_id), quote=True)
+        safe_to = html.escape(str(to_id), quote=True)
+        safe_lbl = html.escape(str(label), quote=True) if label else ""
+        self.edges.append((safe_from, safe_to, f"-.->|{safe_lbl}|" if safe_lbl else "-.->"))
 
     def to_mermaid(self) -> str:
         """Generates compiled Mermaid syntax block with subgraphs."""
